@@ -29,6 +29,7 @@ function buildWithSocket(socket, maskFrames) {
     self.emit('error', err);
   });
   self.emit('connect');
+  self.readyState = READY_STATES.OPEN;
 }
 
 function buildWithHandshake(url_, headers, maskFrames) {
@@ -52,15 +53,14 @@ function buildWithHandshake(url_, headers, maskFrames) {
     Object.keys(headers).forEach(function(k) {
       res.push(util.format('%s: %s', k, headers[k]));
     });
-    res.push('');
-    res.push('');
+    res.push('', '');
     self.socket.write(res.join('\r\n'));
   }).once('data', function(res) {
     res = res.toString();
     res.split(/\r?\n/).forEach(function(line, i) {
       if(i === 0 && !/HTTP\/1\.1 101 Switching Protocols/i.test(line)) {
         self.readyState = READY_STATES.CLOSED;
-        throw new Error('Invalid protocol');
+        throw new Error('Invalid protocol: ' + line);
       }
       if(!/Sec-WebSocket-Accept/i.test(line)) {
         return;
@@ -73,13 +73,13 @@ function buildWithHandshake(url_, headers, maskFrames) {
         throw new Error('Invalid secret');
       }
     });
-
     buildWithSocket(self.socket, !!maskFrames);
   });
 }
 
 function WebSocket(opts) {
   self = this;
+  self.readyState = READY_STATES.CLOSED;
   if(!('socket' in opts ^ 'url' in opts)) {
     throw new Error('Specify either URL or socket');
   }
@@ -123,5 +123,7 @@ WebSocket.prototype.ping = buildMethod(function(data) {
   self.socket.write(self.rfc6455Protocol.buildFrame(new Buffer(data),
     self.rfc6455Protocol.opcodes.OP_PING));
 });
+
+WebSocket.prototype.READY_STATES = READY_STATES;
 
 module.exports = WebSocket;
