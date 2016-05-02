@@ -3,11 +3,11 @@ var util = require('util');
 var stream = require('stream');
 var crypto = require('crypto');
 
-var self;
 var state;
 var payloadBytesWritten;
 var payload;
 var header;
+var self;
 
 var STATES = {
   LISTENING: 0,
@@ -49,6 +49,23 @@ function applyMask(payload, mask, offset) {
     payload[x] = payload[x] ^ mask[i%4];
   }
   return payload;
+}
+
+function emitAndReinitialize() {
+  if(header.payloadLength === payloadBytesWritten) {
+    if(header.isMasked) {
+      applyMask(payload, header.mask);
+    }
+    switch(header.opcode) {
+      case Rfc6455Protocol.prototype.opcodes.OP_TEXT:
+        self.emit('payload', payload);
+        break;
+      case Rfc6455Protocol.prototype.opcodes.OP_PING:
+        self.emit('ping', payload);
+        break;
+    }
+    initialize();
+  }
 }
 
 function Rfc6455Protocol(isMasking) {
@@ -167,20 +184,7 @@ function processHeader(chunk, cb) {
 
   payloadBytesWritten = chunk.length - header.payloadOffset;
 
-  if(payloadBytesWritten === header.payloadLength) {
-    if(header.isMasked) {
-      applyMask(payload, header.mask);
-    }
-    switch(header.opcode) {
-      case Rfc6455Protocol.prototype.opcodes.OP_TEXT:
-        self.emit('payload', payload);
-        break;
-      case Rfc6455Protocol.prototype.opcodes.OP_PING:
-        self.emit('ping', payload);
-        break;
-    }
-    initialize();
-  }
+  emitAndReinitialize();
 
   cb();
 }
@@ -191,24 +195,9 @@ function processPayload(chunk, cb) {
   if(payloadBytesWritten > header.payloadLength) {
     return cb(new Error('Payload size'));
   }
-  if(header.payloadLength === payloadBytesWritten) {
-    if(header.isMasked) {
-      applyMask(payload, header.mask);
-    }
-    switch(header.opcode) {
-      case Rfc6455Protocol.prototype.opcodes.OP_TEXT:
-        self.emit('payload', payload);
-        break;
-      case Rfc6455Protocol.prototype.opcodes.OP_PING:
-        self.emit('ping', payload);
-        break;
-    }
-    initialize();
-  }
-
+  emitAndReinitialize();
   cb();
 }
-
 
 Rfc6455Protocol.prototype._write = function(chunk, encoding, cb) {
   switch(state) {
