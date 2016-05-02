@@ -5,32 +5,61 @@ var util = require('util');
 var url = require('url');
 var net = require('net');
 var Rfc6455Protocol = require('./Rfc6455Protocol');
-var rfc6455Protocol = new Rfc6455Protocol();
 var self;
 
-function WebSocket(u, headers) {
-  self = this;
-  var parsedUrl = url.parse(u);
+var READY_STATES = {
+  CONNECTING: 0,
+  OPEN: 1,
+  CLOSING: 2,
+  CLOSED: 3
+};
+
+function buildWithSocket(socket, maskFrames) {
+  self.socket = socket;
+  self.socket.setTimeout(0);
+  self.rfc6455Protocol = new Rfc6455Protocol(!!maskFrames);
+  self.socket.pipe(self.rfc6455Protocol);
+  self.rfc6455Protocol.on('payload', function(payload) {
+    self.emit('message', payload.toString());
+  });
+  self.rfc6455Protocol.on('ping', function(payload) {
+    self.emit('ping', payload.toString());
+  });
+  self.rfc6455Protocol.on('error', function(err) {
+    self.emit('error', err);
+  });
+  self.emit('connect');
+}
+
+function buildWithHandshake(url_, headers, maskFrames) {
+  self.readyState = READY_STATES.CLOSED;
+  var parsedUrl = url.parse(url_);
   var secret = crypto.randomBytes(16).toString('base64');
-  this.socket = net.connect({
+  self.socket = net.connect({
     host: parsedUrl.hostname,
     port: parsedUrl.port
   }, function() {
-    self.socket.write('GET ' + parsedUrl.href + ' HTTP/1.1\r\n');
-    self.socket.write('Upgrade: websocket\r\n');
-    self.socket.write('Connection: Upgrade\r\n');
-    self.socket.write('Host: ' + parsedUrl.hostname + '\r\n');
-    self.socket.write('Origin: ' + parsedUrl.href + '\r\n');
-    self.socket.write('Sec-WebSocket-Key: ' + secret + '\r\n');
-    self.socket.write('Sec-WebSocket-Version: 13\r\n');
+    self.readyState = READY_STATES.CONNECTING;
+    var res = [
+      'GET ' + parsedUrl.href + ' HTTP/1.1',
+      'Upgrade: WebSocket',
+      'Connection: Upgrade',
+      'Host: ' + parsedUrl.hostname,
+      'Origin: ' + parsedUrl.href,
+      'Sec-WebSocket-Key: ' + secret,
+      'Sec-WebSocket-Version: 13'
+    ];
     Object.keys(headers).forEach(function(k) {
-      self.socket.write(util.format('%s: %s\r\n', k, headers[k]));
+      res.push(util.format('%s: %s', k, headers[k]));
     });
-    this.write('\r\n');
-  }).once('data', function(response) {
-    response = response.toString();
-    response.split('\r\n').forEach(function(line, i) {
+    res.push('');
+    res.push('');
+    self.socket.write(res.join('\r\n'));
+  }).once('data', function(res) {
+    res = res.toString();
+    res.split(/\r?\n/).forEach(function(line, i) {
       if(i === 0 && !/HTTP\/1\.1 101 Switching Protocols/i.test(line)) {
+        self.readyState = READY_STATES.CLOSED;
         throw new Error('Invalid protocol');
       }
       if(!/Sec-WebSocket-Accept/i.test(line)) {
@@ -40,19 +69,38 @@ function WebSocket(u, headers) {
       var sha1 = crypto.createHash('sha1');
       sha1.update((secret + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'));
       if(sha1.digest('base64').trim() !== headerSecret) {
+        self.readyState = READY_STATES.CLOSED;
         throw new Error('Invalid secret');
       }
     });
-    self.socket.pipe(rfc6455Protocol);
-    self.emit('connect');
+
+    buildWithSocket(self.socket, !!maskFrames);
   });
+}
+
+function WebSocket(opts) {
+  self = this;
+  if(!('socket' in opts ^ 'url' in opts)) {
+    throw new Error('Specify either URL or socket');
+  }
+  if(!opts.maskFrames) {
+    opts.maskFrames = true;
+  } else {
+    opts.maskFrames = !!opts.maskFrames;
+  }
+  if('url' in opts) {
+    return buildWithHandshake(opts.url, !opts.headers ? {} : opts.headers,
+      opts.maskFrames);
+  }
+  buildWithSocket(opts.socket, opts.maskFrames);
 }
 
 util.inherits(WebSocket, events.EventEmitter);
 
 function buildMethod(fn) {
   return function() {
-    if(self.closed) {
+    if(self.readyState === READY_STATES.CLOSING ||
+        self.readyState === READY_STATES.CLOSED) {
       return;
     }
     fn.apply(self, Array.prototype.slice.call(arguments));
@@ -60,19 +108,20 @@ function buildMethod(fn) {
 }
 
 WebSocket.prototype.send = buildMethod(function(data) {
-  console.log(data);
-  self.socket.write(rfc6455Protocol.buildFrame(new Buffer(data),
-    rfc6455Protocol.opcodes.OP_TEXT));
+  self.socket.write(self.rfc6455Protocol.buildFrame(new Buffer(data),
+    self.rfc6455Protocol.opcodes.OP_TEXT));
 });
 
 WebSocket.prototype.close = buildMethod(function(code, reason) {
-  self.socket.write(rfc6455Protocol.buildFrame(reason,
-    rfc6455Protocol.opcodes.OP_CLOSE, code));
-  self.closed = true;
+  self.readyState = READY_STATES.CLOSING;
+  self.socket.write(self.rfc6455Protocol.buildFrame(reason,
+    self.rfc6455Protocol.opcodes.OP_CLOSE, code));
+  self.readyState = READY_STATES.CLOSED;
 });
 
-WebSocket.prototype.ping = function(data) {
-  self.socket.write(rfc6455Protocol.buildFrame(data,
-    rfc6455Protocol.opcodes.OP_PING));
-};
+WebSocket.prototype.ping = buildMethod(function(data) {
+  self.socket.write(self.rfc6455Protocol.buildFrame(new Buffer(data),
+    self.rfc6455Protocol.opcodes.OP_PING));
+});
 
+module.exports = WebSocket;
