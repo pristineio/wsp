@@ -134,6 +134,11 @@ WebSocket.prototype.ping = buildMethod(function(data) {
   self.socket.write(self.rfc6455Protocol.buildPingFrame(new Buffer(data)));
 });
 
+WebSocket.prototype.pong = buildMethod(function(data) {
+  data = data || 0;
+  self.socket.write(self.rfc6455Protocol.buildPongFrame(new Buffer(data)));
+});
+
 WebSocket.prototype.READY_STATES = READY_STATES;
 
 module.exports = WebSocket;
