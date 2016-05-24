@@ -5,7 +5,6 @@ var util = require('util');
 var url = require('url');
 var net = require('net');
 var Rfc6455Protocol = require('./Rfc6455Protocol');
-var self;
 
 var READY_STATES = {
   CONNECTING: 0,
@@ -14,11 +13,10 @@ var READY_STATES = {
   CLOSED: 3
 };
 
-function buildWithSocket(socket, maskFrames) {
-  self.socket = socket;
+function buildWithSocket(self, maskFrames) {
+  self.socket.setNoDelay(true);
   self.socket.setTimeout(0);
   self.rfc6455Protocol = new Rfc6455Protocol(!!maskFrames);
-  self.socket.pipe(self.rfc6455Protocol);
 
   self.rfc6455Protocol.on('text', function(payload) {
     self.emit('message', payload.toString());
@@ -40,11 +38,14 @@ function buildWithSocket(socket, maskFrames) {
     self.emit('error', err);
   });
 
+  // self.socket.pipe(process.stdout);
+  self.socket.pipe(self.rfc6455Protocol);
+
   self.emit('connect');
   self.readyState = READY_STATES.OPEN;
 }
 
-function buildWithHandshake(url_, headers, maskFrames) {
+function buildWithHandshake(self, url_, headers, maskFrames) {
   self.readyState = READY_STATES.CLOSED;
   var parsedUrl = url.parse(url_);
   var secret = crypto.randomBytes(16).toString('base64');
@@ -85,59 +86,76 @@ function buildWithHandshake(url_, headers, maskFrames) {
         throw new Error('Invalid secret');
       }
     });
-    buildWithSocket(self.socket, !!maskFrames);
+    buildWithSocket(self, self.socket, !!maskFrames);
   });
 }
 
 function WebSocket(opts) {
-  self = this;
+  var self = this;
   self.readyState = READY_STATES.CLOSED;
   if(!('socket' in opts ^ 'url' in opts)) {
     throw new Error('Specify either URL or socket');
   }
-  if(!opts.maskFrames) {
-    opts.maskFrames = true;
-  } else {
-    opts.maskFrames = !!opts.maskFrames;
-  }
+  opts.maskFrames = !!opts.maskFrames;
   if('url' in opts) {
-    return buildWithHandshake(opts.url, !opts.headers ? {} : opts.headers,
+    return buildWithHandshake(self, opts.url, !opts.headers ? {} : opts.headers,
       opts.maskFrames);
   }
-  buildWithSocket(opts.socket, opts.maskFrames);
+  self.socket = opts.socket;
+  buildWithSocket(self, opts.maskFrames);
 }
 
 util.inherits(WebSocket, events.EventEmitter);
 
-function buildMethod(fn) {
-  return function() {
-    if(self.readyState === READY_STATES.CLOSING ||
-        self.readyState === READY_STATES.CLOSED) {
-      return;
-    }
-    fn.apply(self, Array.prototype.slice.call(arguments));
-  };
-}
+// function buildMethod(fn) {
+//   return function() {
+//     if(self.readyState === READY_STATES.CLOSING ||
+//         self.readyState === READY_STATES.CLOSED) {
+//       return;
+//     }
+//     fn.apply(self, Array.prototype.slice.call(arguments));
+//   };
+// }
 
-WebSocket.prototype.send = buildMethod(function(data) {
+WebSocket.prototype.send = function(data) {
+  var self = this;
+  if(self.readyState === READY_STATES.CLOSING ||
+      self.readyState === READY_STATES.CLOSED) {
+    return;
+  }
   self.socket.write(self.rfc6455Protocol.buildTextFrame(new Buffer(data)));
-});
+};
 
-WebSocket.prototype.close = buildMethod(function(code) {
+WebSocket.prototype.close = function(code) {
+  var self = this;
+  if(self.readyState === READY_STATES.CLOSING ||
+      self.readyState === READY_STATES.CLOSED) {
+    return;
+  }
   self.readyState = READY_STATES.CLOSING;
   code = code || '1000';
   self.socket.end(self.rfc6455Protocol.buildCloseFrame(new Buffer(code)));
-});
+};
 
-WebSocket.prototype.ping = buildMethod(function(data) {
+WebSocket.prototype.ping = function(data) {
+  var self = this;
+  if(self.readyState === READY_STATES.CLOSING ||
+      self.readyState === READY_STATES.CLOSED) {
+    return;
+  }
   data = data || 0;
   self.socket.write(self.rfc6455Protocol.buildPingFrame(new Buffer(data)));
-});
+};
 
-WebSocket.prototype.pong = buildMethod(function(data) {
+WebSocket.prototype.pong = function(data) {
+  var self = this;
+  if(self.readyState === READY_STATES.CLOSING ||
+      self.readyState === READY_STATES.CLOSED) {
+    return;
+  }
   data = data || 0;
   self.socket.write(self.rfc6455Protocol.buildPongFrame(new Buffer(data)));
-});
+};
 
 WebSocket.prototype.READY_STATES = READY_STATES;
 
