@@ -26,16 +26,18 @@ function buildWithSocket(self, maskFrames) {
     self.emit('ping', payload.toString());
   });
 
-  self.rfc6455Protocol.on('close', function(code) {
-    self.readyState = READY_STATES.CLOSING;
-    self.socket.once('close', function() {
-      self.emit('close', code.toString());
-      self.readyState = READY_STATES.CLOSED;
-    });
-  });
-
   self.rfc6455Protocol.on('error', function(err) {
     self.emit('error', err);
+  });
+
+  self.socket.once('end', function() {
+    self.readyState = READY_STATES.CLOSING;
+    self.emit('close', '1000');
+  });
+
+  self.socket.once('close', function() {
+    self.readyState = READY_STATES.CLOSED;
+    self.emit('close', '1000');
   });
 
   // self.socket.pipe(process.stdout);
@@ -116,6 +118,8 @@ util.inherits(WebSocket, events.EventEmitter);
 //     fn.apply(self, Array.prototype.slice.call(arguments));
 //   };
 // }
+
+WebSocket.prototype.READY_STATES = READY_STATES;
 
 WebSocket.prototype.send = function(data) {
   var self = this;
