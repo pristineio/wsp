@@ -35,7 +35,8 @@ function buildWithSocket(self, maskFrames) {
     self.emit('close', '1000');
   });
 
-  self.socket.once('close', function() {
+  self.socket.on('close', function() {
+    console.log('---- WebSocket: CLOSE');
     self.readyState = READY_STATES.CLOSED;
     self.emit('close', '1000');
   });
