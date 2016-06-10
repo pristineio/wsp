@@ -18,6 +18,11 @@ function buildWithSocket(self, maskFrames) {
   self.socket.setTimeout(0);
   self.rfc6455Protocol = new Rfc6455Protocol(!!maskFrames);
 
+  var onClose = function(payload) {
+    self.readyState = READY_STATES.CLOSED;
+    self.emit('close', '1000');
+  };
+
   self.rfc6455Protocol.on('text', function(payload) {
     self.emit('message', payload.toString());
   });
@@ -35,11 +40,8 @@ function buildWithSocket(self, maskFrames) {
     self.emit('close', '1000');
   });
 
-  self.socket.on('close', function() {
-    console.log('---- WebSocket: CLOSE');
-    self.readyState = READY_STATES.CLOSED;
-    self.emit('close', '1000');
-  });
+  self.rfc6455Protocol.once('close', onClose);
+  self.socket.once('close', onClose);
 
   // self.socket.pipe(process.stdout);
   self.socket.pipe(self.rfc6455Protocol);

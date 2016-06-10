@@ -188,7 +188,6 @@ function processChunk(self, chunk_, i, cb) {
 
   switch(header.opcode) {
     case OPCODES.CLOSE:
-      console.log('---- Rfc6455Protocol: emitting CLOSE');
     case OPCODES.TEXT:
     case OPCODES.PING:
       self.emit(OPCODES_NAMES[header.opcode], payload);
