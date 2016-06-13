@@ -160,14 +160,15 @@ function processChunk(self, chunk_, i, cb) {
     chunk.slice(payloadOffset-4, payloadOffset).copy(header.mask);
   }
 
-  console.log('\n');
-  console.log('(i,j)          = (%s,%s)', i, chunk_.length);
-  console.log('isMasked       = ' + header.isMasked);
-  console.log('isFinal        = ' + header.isFinal);
-  console.log('isContinuation = ' + header.isContinuation);
-  console.log('opcode         = ' + OPCODES_NAMES[header.opcode].toUpperCase());
-  console.log('Header length  = ' + payloadOffset);
+
+  // console.log('(i,j)          = (%s,%s)', i, chunk_.length);
+  // console.log('isMasked       = ' + header.isMasked);
+  // console.log('isFinal        = ' + header.isFinal);
+  // console.log('isContinuation = ' + header.isContinuation);
+  // console.log('opcode         = ' + OPCODES_NAMES[header.opcode].toUpperCase());
+  // console.log('Header length  = ' + payloadOffset);
   console.log('Payload length = ' + payloadLength);
+
 
   if(header.isContinuation && !header.isFinal) {
     return cb(payloadOffset, chunk.length);
@@ -199,12 +200,16 @@ function processChunk(self, chunk_, i, cb) {
 
 Rfc6455Protocol.prototype._write = function(chunk, encoding, cb) {
   var self = this;
+
+  console.log('Chunk length   = ' + chunk.length);
+
   var done = function(i) {
     if((chunk.length-i) > 0) {
       return processChunk(self, chunk, i, done);
     }
     cb();
   };
+
   processChunk(self, chunk, 0, done);
 };
 

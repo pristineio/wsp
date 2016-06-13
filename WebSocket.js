@@ -112,16 +112,6 @@ function WebSocket(opts) {
 
 util.inherits(WebSocket, events.EventEmitter);
 
-// function buildMethod(fn) {
-//   return function() {
-//     if(self.readyState === READY_STATES.CLOSING ||
-//         self.readyState === READY_STATES.CLOSED) {
-//       return;
-//     }
-//     fn.apply(self, Array.prototype.slice.call(arguments));
-//   };
-// }
-
 WebSocket.prototype.READY_STATES = READY_STATES;
 
 WebSocket.prototype.send = function(data) {

@@ -1,6 +1,6 @@
 {
   "name": "wsp",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "Simple WebSockets",
   "author": "Pristine Dev Team <dev@pristine.io>",
   "license": "MIT"
