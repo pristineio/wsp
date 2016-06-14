@@ -40,7 +40,7 @@ function initialize(self) {
 }
 
 function applyMask(payload, mask, offset) {
-  if(mask.length === 0) {
+  if(!mask || mask.length === 0 || !payload) {
     return;
   }
   offset = offset || 0;
@@ -205,7 +205,9 @@ function processPayload(self, chunk_, cb) {
   if(remaining > 0) {
     var frame = chunk_.slice(amount);
     processHeader(self, frame, cb);
-    innerProcessPayload(frame);
+    if(self.state === 1) {
+      innerProcessPayload(frame);
+    }
   }
 }
 
