@@ -74,6 +74,16 @@ Object.keys(OPCODES).forEach(function(opCodeName) {
   };
 });
 
+function emitFrame(self) {
+  switch(self.header.opcode) {
+    case OPCODES.CLOSE:
+    case OPCODES.TEXT:
+    case OPCODES.PING:
+      self.emit(OPCODES_NAMES[self.header.opcode], self.payload);
+      break;
+  }
+}
+
 function buildFrame(self, buffer, opcode) {
   buffer = buffer || new Buffer(0).fill(0);
   var length = buffer.length;
@@ -159,46 +169,58 @@ function processHeader(self, chunk_, cb) {
   if(header.isMasked) {
     header.payloadOffset += 4;
     header.mask = new Buffer(4).fill(0);
-    chunk.slice(header.payloadOffset-4, header.payloadOffset)
-      .copy(header.mask);
+    chunk.slice(header.payloadOffset-4, header.payloadOffset).copy(header.mask);
   }
 
-  return header;
+  self.header = header;
+  if(self.header.payloadLength > 0) {
+    self.payload = new Buffer(self.header.payloadLength).fill(0);
+    chunk_.slice(self.header.payloadOffset).copy(self.payload);
+    self.bytesCopied += (chunk_.length - self.header.payloadOffset);
+  }
+
+  if(self.bytesCopied !== self.header.payloadLength) {
+    self.state = 1;
+  } else {
+    emitFrame(self);
+  }
+}
+
+function processPayload(self, chunk_, cb) {
+  var innerProcessPayload = function(chunk, amount) {
+    amount = amount || chunk.length;
+    chunk.copy(self.payload, self.bytesCopied, 0, amount);
+    self.bytesCopied += amount;
+    if(self.bytesCopied === self.header.payloadLength) {
+      if(self.header.isMasked) {
+        applyMask(self.payload, self.header.mask);
+      }
+      emitFrame(self);
+      initialize(self);
+    }
+  };
+
+  var remaining = self.bytesCopied + chunk_.length -
+    self.header.payloadLength;
+
+  var amount = remaining > 0 ?
+    self.header.payloadLength - self.bytesCopied :
+    chunk_.length;
+
+  innerProcessPayload(chunk_, amount);
+
+  if(remaining > 0) {
+    var frame = chunk_.slice(amount);
+    processHeader(self, frame, cb);
+    innerProcessPayload(frame);
+  }
 }
 
 Rfc6455Protocol.prototype._write = function(chunk, encoding, cb) {
   var self = this;
   switch(self.state) {
-    case 0:
-      self.header = processHeader(self, chunk, cb);
-      if(self.header.payloadLength > 0) {
-        self.payload = new Buffer(self.header.payloadLength).fill(0);
-        chunk.slice(self.header.payloadOffset).copy(self.payload);
-        self.bytesCopied += (chunk.length - self.header.payloadOffset);
-      }
-      self.state = 1;
-      break;
-
-    case 1:
-      var amount = self.bytesCopied + chunk.length > self.header.payloadLength ?
-        self.header.payloadLength - self.bytesCopied :
-        chunk.length;
-      chunk.copy(self.payload, self.bytesCopied, 0, amount);
-      self.bytesCopied += amount;
-      if(self.bytesCopied === self.header.payloadLength) {
-        if(self.header.isMasked) {
-          applyMask(self.payload, self.header.mask);
-        }
-        switch(self.header.opcode) {
-          case OPCODES.CLOSE:
-          case OPCODES.TEXT:
-          case OPCODES.PING:
-            self.emit(OPCODES_NAMES[self.header.opcode], self.payload);
-            break;
-        }
-        initialize(self);
-      }
-      break;
+    case 0: processHeader(self, chunk, cb); break;
+    case 1: processPayload(self, chunk, cb); break;
   }
   cb();
 };
