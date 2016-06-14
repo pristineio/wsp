@@ -175,7 +175,7 @@ function processHeader(self, chunk_, cb) {
     self.bytesCopied += (chunk_.length - self.header.payloadOffset);
   }
 
-  if(self.bytesCopied !== self.header.payloadLength) {
+  if(self.bytesCopied < self.header.payloadLength) {
     self.state = 1;
   } else {
     emitFrame(self);
@@ -189,9 +189,14 @@ function processPayload(self, chunk_, cb) {
       chunk.copy(self.payload, self.bytesCopied, 0, amount);
     } catch(_) {
       throw new Error(JSON.stringify({
-        chunk: chunk,
-        payload: self.payload,
         bytesCopied: self.bytesCopied,
+
+        chunk_: chunk,
+        'chunk_.length': chunk.length,
+
+        payload: self.payload,
+        'payload.length': self.header.payloadLength,
+
         i: 0,
         j: amount
       }));
@@ -203,12 +208,15 @@ function processPayload(self, chunk_, cb) {
     }
   };
 
-  var remaining = self.bytesCopied + chunk_.length -
-    self.header.payloadLength;
+  var remaining = self.bytesCopied + chunk_.length - self.header.payloadLength;
 
   var amount = remaining > 0 ?
     self.header.payloadLength - self.bytesCopied :
     chunk_.length;
+
+  if(amount < 0) {
+    amount = chunk_.length;
+  }
 
   innerProcessPayload(chunk_, amount);
 
