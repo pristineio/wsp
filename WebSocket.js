@@ -16,32 +16,32 @@ var READY_STATES = {
 function buildWithSocket(self, maskFrames) {
   self.socket.setNoDelay(true);
   self.socket.setTimeout(0);
-  self.rfc6455Protocol = new Rfc6455Protocol(!!maskFrames);
+  self.rfc6455Protocol = new Rfc6455Protocol(!!maskFrames,
+    self.rfc6455ProtocolListener);
 
-  var onClose = function(payload) {
-    self.readyState = READY_STATES.CLOSED;
-    self.emit('close', '1000');
-  };
+  // self.rfc6455Protocol.on('text', function(payload) {
+  //   self.emit('message', payload.toString());
+  // });
 
-  self.rfc6455Protocol.on('text', function(payload) {
-    self.emit('message', payload.toString());
-  });
-
-  self.rfc6455Protocol.on('ping', function(payload) {
-    self.emit('ping', payload.toString());
-  });
+  // self.rfc6455Protocol.on('ping', function(payload) {
+  //   self.emit('ping', payload.toString());
+  // });
 
   self.rfc6455Protocol.on('error', function(err) {
     self.emit('error', err);
   });
+
+  // self.rfc6455Protocol.once('close', onClose);
 
   self.socket.once('end', function() {
     self.readyState = READY_STATES.CLOSING;
     self.emit('close', '1000');
   });
 
-  self.rfc6455Protocol.once('close', onClose);
-  self.socket.once('close', onClose);
+  self.socket.once('close', function(payload) {
+    self.readyState = READY_STATES.CLOSED;
+    self.emit('close', '1000');
+  });
 
   self.socket.pipe(self.rfc6455Protocol);
 
@@ -107,6 +107,22 @@ function WebSocket(opts) {
   }
   self.socket = opts.socket;
   buildWithSocket(self, opts.maskFrames);
+
+  self.rfc6455ProtocolListener = function(opcode, payload) {
+    switch(opcode) {
+      case Rfc6455Protocol.OPCODES.CLOSE:
+        self.readyState = READY_STATES.CLOSED;
+        self.emit('close', payload.toString());
+        break;
+      case Rfc6455Protocol.OPCODES.PING:
+        self.emit('ping', payload.toString());
+        break;
+      case Rfc6455Protocol.OPCODES.TEXT:
+        self.emit('message', payload.toString());
+        break;
+    }
+  };
+
 }
 
 util.inherits(WebSocket, events.EventEmitter);
