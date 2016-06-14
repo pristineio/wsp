@@ -71,10 +71,11 @@ Object.keys(OPCODES).forEach(function(opCodeName) {
 });
 
 function emitFrame(self) {
+  if(self.header.isMasked) {
+    applyMask(self.payload, self.header.mask);
+  }
   switch(self.header.opcode) {
     case OPCODES.CLOSE:
-      self.emit(OPCODES_NAMES[self.header.opcode], new Buffer(0).fill(0));
-      break;
     case OPCODES.PING:
     case OPCODES.TEXT:
       self.emit(OPCODES_NAMES[self.header.opcode], self.payload);
@@ -167,6 +168,7 @@ function processHeader(self, chunk_, cb) {
   }
 
   self.header = header;
+
   if(self.header.payloadLength > 0) {
     self.payload = new Buffer(self.header.payloadLength).fill(0);
     chunk_.slice(self.header.payloadOffset).copy(self.payload);
@@ -186,9 +188,6 @@ function processPayload(self, chunk_, cb) {
     chunk.copy(self.payload, self.bytesCopied, 0, amount);
     self.bytesCopied += amount;
     if(self.bytesCopied === self.header.payloadLength) {
-      if(self.header.isMasked) {
-        applyMask(self.payload, self.header.mask);
-      }
       emitFrame(self);
       initialize(self);
     }
