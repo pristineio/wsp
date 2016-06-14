@@ -43,7 +43,6 @@ function buildWithSocket(self, maskFrames) {
   self.rfc6455Protocol.once('close', onClose);
   self.socket.once('close', onClose);
 
-  // self.socket.pipe(process.stdout);
   self.socket.pipe(self.rfc6455Protocol);
 
   self.emit('connect');

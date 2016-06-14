@@ -37,11 +37,15 @@ var LENGTH = 127;
 
 function initialize(self) {
   itr = 0;
+  self.bytesCopied = 0;
+  self.state = 0;
+  self.header = null;
+  self.payload = null;
 }
 
 function applyMask(payload, mask, offset) {
   if(mask.length === 0) {
-    return payload;
+    return;
   }
   offset = offset || 0;
   var i = -1;
@@ -50,7 +54,6 @@ function applyMask(payload, mask, offset) {
     var x = offset+i;
     payload[x] = payload[x] ^ mask[i%4];
   }
-  return payload;
 }
 
 function Rfc6455Protocol(isMasking) {
@@ -106,7 +109,7 @@ function buildFrame(self, buffer, opcode) {
   return wsFrame;
 }
 
-function processChunk(self, chunk_, i, cb) {
+function processHeader(self, chunk_, cb) {
   var header = {
     mask: null,
     validOpcode: false,
@@ -114,14 +117,16 @@ function processChunk(self, chunk_, i, cb) {
     isContinuation: false,
     isFinal: false,
     isMasked: false,
-    opcode: -1
+    opcode: -1,
+    payloadOffset: 0,
+    payloadLength: 0
   };
 
   if(++itr > 100) {
     return cb(new Error('Max depth exceeded'));
   }
 
-  var chunk = chunk_.slice(i);
+  var chunk = chunk_.slice(0);
 
   header.reservedBitsZero = (chunk[0] & RSV) === 0;
   header.isFinal = (chunk[0] & FIN) === FIN;
@@ -129,9 +134,8 @@ function processChunk(self, chunk_, i, cb) {
   header.validOpcode = VALID_OPCODES[header.opcode] === 1;
   header.isContinuation = header.opcode === 0;
   header.isMasked = (chunk[1] & MASK) === MASK;
-
-  var payloadLength = chunk[1] & LENGTH;
-  var payloadOffset = 2;
+  header.payloadLength = chunk[1] & LENGTH;
+  header.payloadOffset = 2;
 
   if(!header.reservedBitsZero) {
     return cb(new Error('RSV not zero'));
@@ -145,72 +149,58 @@ function processChunk(self, chunk_, i, cb) {
     return cb(new Error('Expected non-final packet'));
   }
 
-  if(payloadLength === 126) {
-    payloadLength = chunk.readUInt16BE(2);
-    payloadOffset = 4;
-  } else if(payloadLength === 127) {
-    // TODO: UInt64 length
-    payloadLength = chunk.readUInt32BE(6);
-    payloadOffset = 10;
+  if(header.payloadLength === 126) {
+    header.payloadLength = chunk.readUInt16BE(2);
+    header.payloadOffset = 4;
+  } else if(header.payloadLength === 127) {
+    return cb(new Error('Unsupported UInt64 length'));
   }
 
   if(header.isMasked) {
-    payloadOffset += 4;
+    header.payloadOffset += 4;
     header.mask = new Buffer(4).fill(0);
-    chunk.slice(payloadOffset-4, payloadOffset).copy(header.mask);
+    chunk.slice(header.payloadOffset-4, header.payloadOffset)
+      .copy(header.mask);
   }
 
-
-  // console.log('(i,j)          = (%s,%s)', i, chunk_.length);
-  // console.log('isMasked       = ' + header.isMasked);
-  // console.log('isFinal        = ' + header.isFinal);
-  // console.log('isContinuation = ' + header.isContinuation);
-  // console.log('opcode         = ' + OPCODES_NAMES[header.opcode].toUpperCase());
-  // console.log('Header length  = ' + payloadOffset);
-  console.log('Payload length = ' + payloadLength);
-
-
-  if(header.isContinuation && !header.isFinal) {
-    return cb(payloadOffset, chunk.length);
-  }
-
-  //
-  // Payload
-  //
-  var payload = new Buffer(payloadLength).fill(0);
-  var endPayload = payloadLength + payloadOffset;
-  if(payloadLength > 0) {
-    chunk.slice(payloadOffset, endPayload).copy(payload);
-  }
-
-  if(header.isMasked) {
-    applyMask(payload, header.mask);
-  }
-
-  switch(header.opcode) {
-    case OPCODES.CLOSE:
-    case OPCODES.TEXT:
-    case OPCODES.PING:
-      self.emit(OPCODES_NAMES[header.opcode], payload);
-      break;
-  }
-
-  cb(i+endPayload);
+  return header;
 }
 
 Rfc6455Protocol.prototype._write = function(chunk, encoding, cb) {
   var self = this;
+  switch(self.state) {
+    case 0:
+      self.header = processHeader(self, chunk, cb);
+      if(self.header.payloadLength > 0) {
+        self.payload = new Buffer(self.header.payloadLength).fill(0);
+        chunk.slice(self.header.payloadOffset).copy(self.payload);
+        self.bytesCopied += (chunk.length - self.header.payloadOffset);
+      }
+      self.state = 1;
+      break;
 
-  console.log('Chunk length   = ' + chunk.length);
-
-  var done = function(i) {
-    if((chunk.length-i) > 0) {
-      return processChunk(self, chunk, i, done);
-    }
-    cb();
-  };
-
-  processChunk(self, chunk, 0, done);
+    case 1:
+      var amount = self.bytesCopied + chunk.length > self.header.payloadLength ?
+        self.header.payloadLength - self.bytesCopied :
+        chunk.length;
+      chunk.copy(self.payload, self.bytesCopied, 0, amount);
+      self.bytesCopied += amount;
+      if(self.bytesCopied === self.header.payloadLength) {
+        if(self.header.isMasked) {
+          applyMask(self.payload, self.header.mask);
+        }
+        switch(self.header.opcode) {
+          case OPCODES.CLOSE:
+          case OPCODES.TEXT:
+          case OPCODES.PING:
+            self.emit(OPCODES_NAMES[self.header.opcode], self.payload);
+            break;
+        }
+        initialize(self);
+      }
+      break;
+  }
+  cb();
 };
 
 module.exports = Rfc6455Protocol;
