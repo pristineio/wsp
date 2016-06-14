@@ -3,9 +3,6 @@ var util = require('util');
 var stream = require('stream');
 var crypto = require('crypto');
 
-var maxItr = 1000000;
-var itr = 0;
-
 var OPCODES = {
   CONTINUATION: 0,
   TEXT: 1,
@@ -36,7 +33,6 @@ var OPCODE = 15;
 var LENGTH = 127;
 
 function initialize(self) {
-  itr = 0;
   self.bytesCopied = 0;
   self.state = 0;
   self.header = null;
@@ -132,10 +128,6 @@ function processHeader(self, chunk_, cb) {
     payloadLength: 0
   };
 
-  if(++itr > 100) {
-    return cb(new Error('Max depth exceeded'));
-  }
-
   var chunk = chunk_.slice(0);
 
   header.reservedBitsZero = (chunk[0] & RSV) === 0;
@@ -217,10 +209,9 @@ function processPayload(self, chunk_, cb) {
 }
 
 Rfc6455Protocol.prototype._write = function(chunk, encoding, cb) {
-  var self = this;
-  switch(self.state) {
-    case 0: processHeader(self, chunk, cb); break;
-    case 1: processPayload(self, chunk, cb); break;
+  switch(this.state) {
+    case 0: processHeader(this, chunk, cb); break;
+    case 1: processPayload(this, chunk, cb); break;
   }
   cb();
 };
