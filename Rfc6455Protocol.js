@@ -73,8 +73,10 @@ Object.keys(OPCODES).forEach(function(opCodeName) {
 function emitFrame(self) {
   switch(self.header.opcode) {
     case OPCODES.CLOSE:
-    case OPCODES.TEXT:
+      self.emit(OPCODES_NAMES[self.header.opcode], new Buffer(0).fill(0));
+      break;
     case OPCODES.PING:
+    case OPCODES.TEXT:
       self.emit(OPCODES_NAMES[self.header.opcode], self.payload);
       break;
   }
