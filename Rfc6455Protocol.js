@@ -185,7 +185,17 @@ function processHeader(self, chunk_, cb) {
 function processPayload(self, chunk_, cb) {
   var innerProcessPayload = function(chunk, amount) {
     amount = amount || chunk.length;
-    chunk.copy(self.payload, self.bytesCopied, 0, amount);
+    try {
+      chunk.copy(self.payload, self.bytesCopied, 0, amount);
+    } catch(_) {
+      throw new Error(JSON.stringify({
+        chunk: chunk,
+        payload: self.payload,
+        bytesCopied: self.bytesCopied,
+        i: 0,
+        j: amount
+      }));
+    }
     self.bytesCopied += amount;
     if(self.bytesCopied === self.header.payloadLength) {
       emitFrame(self);
