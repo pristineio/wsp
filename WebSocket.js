@@ -110,14 +110,14 @@ function WebSocket(opts) {
 
   self.rfc6455ProtocolListener = function(opcode, payload) {
     switch(opcode) {
-      case Rfc6455Protocol.OPCODES.CLOSE:
+      case Rfc6455Protocol.prototype.OPCODES.CLOSE:
         self.readyState = READY_STATES.CLOSED;
         self.emit('close', payload.toString());
         break;
-      case Rfc6455Protocol.OPCODES.PING:
+      case Rfc6455Protocol.prototype.OPCODES.PING:
         self.emit('ping', payload.toString());
         break;
-      case Rfc6455Protocol.OPCODES.TEXT:
+      case Rfc6455Protocol.prototype.OPCODES.TEXT:
         self.emit('message', payload.toString());
         break;
     }
