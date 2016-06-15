@@ -176,7 +176,11 @@ Rfc6455Protocol.prototype._write = function(chunk, encoding, cb) {
 
       console.log(JSON.stringify({
         opcode: self.header.opcode,
-        chunk: chunk
+        mask: self.header.mask,
+        chunk: chunk,
+        bytesCopied: self.bytesCopied,
+        bufferLength: !self.payload ? 0 : self.payload.length,
+        j: j,
       }));
 
       if(self.header.payloadLength > 0) {
@@ -194,20 +198,27 @@ Rfc6455Protocol.prototype._write = function(chunk, encoding, cb) {
     case 1:
       var j = Math.min(chunk.length,
         self.header.payloadLength - self.bytesCopied);
+
+      console.log(JSON.stringify({
+        opcode: self.header.opcode,
+        mask: self.header.mask,
+        chunk: chunk,
+        bytesCopied: self.bytesCopied,
+        bufferLength: !self.payload ? 0 : self.payload.length,
+        j: j,
+      }));
+
       chunk.copy(self.payload, self.bytesCopied, 0, j);
+
       self.bytesCopied += j;
+
       if(self.bytesCopied === self.header.payloadLength) {
         emitFrame(self);
       }
+
       if(chunk.length > j) {
         var subChunk = chunk.slice(j);
         self.header = processHeader(subChunk, cb);
-
-        console.log(JSON.stringify({
-          opcode: self.header.opcode,
-          chunk: subChunk
-        }));
-
         if(self.header.payloadLength > 0) {
           self.payload = new Buffer(self.header.payloadLength).fill(0);
           subChunk.slice(self.header.payloadOffset).copy(self.payload);
