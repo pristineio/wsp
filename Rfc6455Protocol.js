@@ -205,7 +205,7 @@ Rfc6455Protocol.prototype._write = function(chunk, encoding, cb) {
 
         console.log(JSON.stringify({
           opcode: self.header.opcode,
-          chunk: chunk
+          chunk: subChunk
         }));
 
         if(self.header.payloadLength > 0) {
