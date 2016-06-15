@@ -19,19 +19,9 @@ function buildWithSocket(self, maskFrames) {
   self.rfc6455Protocol = new Rfc6455Protocol(!!maskFrames,
     self.rfc6455ProtocolListener);
 
-  // self.rfc6455Protocol.on('text', function(payload) {
-  //   self.emit('message', payload.toString());
-  // });
-
-  // self.rfc6455Protocol.on('ping', function(payload) {
-  //   self.emit('ping', payload.toString());
-  // });
-
   self.rfc6455Protocol.on('error', function(err) {
     self.emit('error', err);
   });
-
-  // self.rfc6455Protocol.once('close', onClose);
 
   self.socket.once('end', function() {
     self.readyState = READY_STATES.CLOSING;
@@ -106,9 +96,8 @@ function WebSocket(opts) {
       opts.maskFrames);
   }
   self.socket = opts.socket;
-  buildWithSocket(self, opts.maskFrames);
   self.rfc6455ProtocolListener = function(opcode, payload) {
-    console.log('----------------', opcode);
+    payload = payload || '';
     switch(opcode) {
       case Rfc6455Protocol.prototype.OPCODES.CLOSE:
         self.readyState = READY_STATES.CLOSED;
@@ -122,6 +111,7 @@ function WebSocket(opts) {
         break;
     }
   };
+  buildWithSocket(self, opts.maskFrames);
 }
 
 util.inherits(WebSocket, events.EventEmitter);
