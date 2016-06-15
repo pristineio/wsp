@@ -107,8 +107,8 @@ function WebSocket(opts) {
   }
   self.socket = opts.socket;
   buildWithSocket(self, opts.maskFrames);
-
   self.rfc6455ProtocolListener = function(opcode, payload) {
+    console.log('----------------', opcode);
     switch(opcode) {
       case Rfc6455Protocol.prototype.OPCODES.CLOSE:
         self.readyState = READY_STATES.CLOSED;
@@ -122,12 +122,9 @@ function WebSocket(opts) {
         break;
     }
   };
-
 }
 
 util.inherits(WebSocket, events.EventEmitter);
-
-WebSocket.prototype.READY_STATES = READY_STATES;
 
 WebSocket.prototype.send = function(data) {
   var self = this;
