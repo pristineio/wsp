@@ -166,73 +166,50 @@ function processHeader(chunk_, cb) {
   return header;
 }
 
-
-Rfc6455Protocol.prototype._write = function(chunk, encoding, cb) {
-  var self = this;
-
+function extractFrame(self, chunk_, offset, cb) {
+  var j = 0;
+  var chunk = chunk_.slice(offset);
+  if(chunk.length === 0) {
+    return j;
+  }
   switch(self.state) {
     case 0:
-      self.header = processHeader(chunk, cb); 
-
-      console.log(JSON.stringify({
-        opcode: self.header.opcode,
-        mask: self.header.mask,
-        chunk: chunk,
-        bytesCopied: self.bytesCopied,
-        bufferLength: !self.payload ? 0 : self.payload.length,
-        j: j,
-      }));
-
+      self.header = processHeader(chunk, cb);
       if(self.header.payloadLength > 0) {
         self.payload = new Buffer(self.header.payloadLength).fill(0);
+        if(self.header.payloadLength <= chunk.length) {
+          j = self.header.payloadLength + self.header.payloadOffset + offset;
+          chunk.slice(self.header.payloadOffset, j).copy(self.payload);
+          self.bytesCopied += self.header.payloadLength;
+          emitFrame(self);
+          return j;
+        }
         chunk.slice(self.header.payloadOffset).copy(self.payload);
-        self.bytesCopied += (chunk.length - self.header.payloadOffset);
-      }
-      if(self.bytesCopied === self.header.payloadLength) {
-        emitFrame(self);
-      } else {
+        self.bytesCopied += chunk.length - self.header.payloadOffset;
         self.state = 1;
       }
       break;
 
     case 1:
-      var j = Math.min(chunk.length,
-        self.header.payloadLength - self.bytesCopied);
-
-      console.log(JSON.stringify({
-        opcode: self.header.opcode,
-        mask: self.header.mask,
-        chunk: chunk,
-        bytesCopied: self.bytesCopied,
-        bufferLength: !self.payload ? 0 : self.payload.length,
-        j: j,
-      }));
-
+      j = Math.min(chunk.length, self.header.payloadLength - self.bytesCopied);
       chunk.copy(self.payload, self.bytesCopied, 0, j);
-
       self.bytesCopied += j;
-
       if(self.bytesCopied === self.header.payloadLength) {
         emitFrame(self);
-      }
-
-      if(chunk.length > j) {
-        var subChunk = chunk.slice(j);
-        self.header = processHeader(subChunk, cb);
-        if(self.header.payloadLength > 0) {
-          self.payload = new Buffer(self.header.payloadLength).fill(0);
-          subChunk.slice(self.header.payloadOffset).copy(self.payload);
-          self.bytesCopied += (subChunk.length - self.header.payloadOffset);
-        }
-        if(self.bytesCopied === self.header.payloadLength) {
-          emitFrame(self);
-        } else if(self.bytesCopied > self.header.payloadLength) {
-          return cb(new Error('Buffered more data than payload length'));
-        }
+        return j;
       }
       break;
   }
+  return j;
+}
 
+
+Rfc6455Protocol.prototype._write = function(chunk, encoding, cb) {
+  var self = this;
+  var offset = 0;
+  do {
+    offset = extractFrame(self, chunk, offset, cb);
+  } while(offset > 0);
   cb();
 };
 
