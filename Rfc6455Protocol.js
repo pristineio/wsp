@@ -169,9 +169,16 @@ function processHeader(chunk_, cb) {
 
 Rfc6455Protocol.prototype._write = function(chunk, encoding, cb) {
   var self = this;
+
   switch(self.state) {
     case 0:
       self.header = processHeader(chunk, cb); 
+
+      console.log(JSON.stringify({
+        opcode: self.header.opcode,
+        chunk: chunk
+      }));
+
       if(self.header.payloadLength > 0) {
         self.payload = new Buffer(self.header.payloadLength).fill(0);
         chunk.slice(self.header.payloadOffset).copy(self.payload);
@@ -195,6 +202,12 @@ Rfc6455Protocol.prototype._write = function(chunk, encoding, cb) {
       if(chunk.length > j) {
         var subChunk = chunk.slice(j);
         self.header = processHeader(subChunk, cb);
+
+        console.log(JSON.stringify({
+          opcode: self.header.opcode,
+          chunk: chunk
+        }));
+
         if(self.header.payloadLength > 0) {
           self.payload = new Buffer(self.header.payloadLength).fill(0);
           subChunk.slice(self.header.payloadOffset).copy(self.payload);
@@ -208,6 +221,7 @@ Rfc6455Protocol.prototype._write = function(chunk, encoding, cb) {
       }
       break;
   }
+
   cb();
 };
 
