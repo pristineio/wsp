@@ -17,7 +17,22 @@ function buildWithSocket(self, maskFrames) {
   self.socket.setNoDelay(true);
   self.socket.setTimeout(0);
   self.rfc6455Protocol = new Rfc6455Protocol(!!maskFrames,
-    self.rfc6455ProtocolListener);
+    function(opcode, payload) {
+      payload = payload || '';
+      switch(opcode) {
+        case Rfc6455Protocol.prototype.OPCODES.CLOSE:
+          self.readyState = READY_STATES.CLOSED;
+          self.emit('close', payload.toString());
+          break;
+        case Rfc6455Protocol.prototype.OPCODES.PING:
+          self.emit('ping', payload.toString());
+          break;
+        case Rfc6455Protocol.prototype.OPCODES.TEXT:
+          self.emit('message', payload.toString());
+          break;
+      }
+    }
+  );
 
   self.rfc6455Protocol.on('error', function(err) {
     self.emit('error', err);
@@ -33,10 +48,10 @@ function buildWithSocket(self, maskFrames) {
     self.emit('close', '1000');
   });
 
+  self.readyState = READY_STATES.OPEN;
   self.socket.pipe(self.rfc6455Protocol);
 
   self.emit('connect');
-  self.readyState = READY_STATES.OPEN;
 }
 
 function buildWithHandshake(self, url_, headers, maskFrames) {
@@ -96,21 +111,6 @@ function WebSocket(opts) {
       opts.maskFrames);
   }
   self.socket = opts.socket;
-  self.rfc6455ProtocolListener = function(opcode, payload) {
-    payload = payload || '';
-    switch(opcode) {
-      case Rfc6455Protocol.prototype.OPCODES.CLOSE:
-        self.readyState = READY_STATES.CLOSED;
-        self.emit('close', payload.toString());
-        break;
-      case Rfc6455Protocol.prototype.OPCODES.PING:
-        self.emit('ping', payload.toString());
-        break;
-      case Rfc6455Protocol.prototype.OPCODES.TEXT:
-        self.emit('message', payload.toString());
-        break;
-    }
-  };
   buildWithSocket(self, opts.maskFrames);
 }
 
