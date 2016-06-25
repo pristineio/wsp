@@ -122,7 +122,7 @@ function processHeader(chunk_, cb) {
     isContinuation: false,
     isFinal: false,
     isMasked: false,
-    opcode: 1000,
+    opcode: -1,
     payloadOffset: 0,
     payloadLength: 0
   };
