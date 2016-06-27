@@ -187,6 +187,9 @@ function extractFrame(self, chunk_, offset, cb) {
         chunk.slice(self.header.payloadOffset).copy(self.payload);
         self.bytesCopied += chunk.length - self.header.payloadOffset;
         self.state = 1;
+      } else {
+        emitFrame(self);
+        return j;
       }
       break;
 
