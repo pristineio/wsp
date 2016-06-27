@@ -27,6 +27,9 @@ function buildWithSocket(self, maskFrames) {
         case Rfc6455Protocol.prototype.OPCODES.PING:
           self.emit('ping', payload.toString());
           break;
+        case Rfc6455Protocol.prototype.OPCODES.PONG:
+          self.emit('pong', payload.toString());
+          break;
         case Rfc6455Protocol.prototype.OPCODES.TEXT:
           self.emit('message', payload.toString());
           break;
