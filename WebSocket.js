@@ -61,6 +61,9 @@ function buildWithHandshake(self, url_, headers, maskFrames) {
   self.readyState = READY_STATES.CLOSED;
   var parsedUrl = url.parse(url_);
   var secret = crypto.randomBytes(16).toString('base64');
+  if(!parsedUrl.port) {
+    parsedUrl.port = parsedUrl.protocol === 'wss:' ? '443' : '80';
+  }
   self.socket = net.connect({
     host: parsedUrl.hostname,
     port: parsedUrl.port
