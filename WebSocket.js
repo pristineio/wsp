@@ -15,7 +15,11 @@ var READY_STATES = {
 
 function buildWithSocket(self, maskFrames) {
   self.socket.setNoDelay(true);
-  self.socket.setTimeout(0);
+  self.socket.setTimeout(0, function() {
+    self.readyState = READY_STATES.CLOSED;
+    self.emit('close', 'TIMED_OUT');
+  });
+  self.socket.setKeepAlive(true, 0);
   self.rfc6455Protocol = new Rfc6455Protocol(!!maskFrames,
     function(opcode, payload) {
       payload = payload || '';
