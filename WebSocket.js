@@ -20,6 +20,7 @@ function buildWithSocket(self, maskFrames) {
     self.emit('close', 'TIMED_OUT');
   });
   self.socket.setKeepAlive(true, 0);
+
   self.rfc6455Protocol = new Rfc6455Protocol(!!maskFrames,
     function(opcode, payload) {
       payload = payload || '';
@@ -48,6 +49,10 @@ function buildWithSocket(self, maskFrames) {
   self.socket.once('end', function() {
     self.readyState = READY_STATES.CLOSING;
     self.emit('close', '1000');
+  });
+
+  self.socket.on('error', function(err) {
+    self.emit('error', err);
   });
 
   self.socket.once('close', function(payload) {
@@ -143,7 +148,11 @@ WebSocket.prototype.close = function(code) {
   }
   self.readyState = READY_STATES.CLOSING;
   code = code || '1000';
-  self.socket.end(self.rfc6455Protocol.buildCloseFrame(new Buffer(code)));
+  try {
+    self.socket.end(self.rfc6455Protocol.buildCloseFrame(new Buffer(code)));
+  } catch(ex) {
+    self.socket.destroy();
+  }
 };
 
 WebSocket.prototype.ping = function(data) {
