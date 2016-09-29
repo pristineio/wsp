@@ -45,21 +45,24 @@ function applyMask(payload, mask, offset) {
   }
 }
 
-function Rfc6455Protocol(isMasking, listener) {
+function Rfc6455TransformStream(isMasking, listener) {
+  if(!(this instanceof Rfc6455TransformStream)) {
+    return new Rfc6455TransformStream(isMasking);
+  }
   this.listener = listener || function() {};
+  stream.Transform.call(this);
   this.isMasking = !!isMasking;
-  stream.Writable.call(this);
   initialize(this);
 }
-
-util.inherits(Rfc6455Protocol, stream.Writable);
+util.inherits(Rfc6455TransformStream, stream.Transform);
 
 var OPCODE_NAMES = new Array(11).fill('undefined');
 Object.keys(OPCODES).forEach(function(opCodeName) {
   OPCODE_NAMES[OPCODES[opCodeName]] = opCodeName.toLowerCase();
   var niceName = opCodeName.substring(0,1).toUpperCase() +
     opCodeName.substring(1).toLowerCase();
-  Rfc6455Protocol.prototype['build' + niceName + 'Frame'] = function(buffer) {
+  var method = 'build' + niceName + 'Frame';
+  Rfc6455TransformStream.prototype[method] = function(buffer) {
     return buildFrame(this, buffer, OPCODES[opCodeName]);
   };
 });
@@ -69,14 +72,6 @@ function initialize(self) {
   self.state = 0;
   self.header = null;
   self.payload = null;
-}
-
-function emitFrame(self) {
-  if(self.header.isMasked) {
-    applyMask(self.payload, self.header.mask);
-  }
-  self.listener(self.header.opcode, self.payload);
-  initialize(self);
 }
 
 function buildFrame(self, buffer, opcode) {
@@ -166,7 +161,16 @@ function processHeader(chunk_, cb) {
   return header;
 }
 
-function extractFrame(self, chunk_, offset, cb) {
+function emitFrame(self, cb) {
+  if(self.header.isMasked) {
+    applyMask(self.payload, self.header.mask);
+  }
+  self.listener(self.header.opcode, self.payload);
+  cb(null, self.payload);
+  initialize(self);
+}
+
+function extractFrame(self, chunk_, offset, onTransform) {
   var j = 0;
   var chunk = chunk_.slice(offset);
   if(chunk.length === 0) {
@@ -174,21 +178,21 @@ function extractFrame(self, chunk_, offset, cb) {
   }
   switch(self.state) {
     case 0:
-      self.header = processHeader(chunk, cb);
+      self.header = processHeader(chunk, onTransform);
       if(self.header.payloadLength > 0) {
         self.payload = new Buffer(self.header.payloadLength).fill(0);
         if(self.header.payloadLength <= chunk.length) {
           j = self.header.payloadLength + self.header.payloadOffset + offset;
           chunk.slice(self.header.payloadOffset, j).copy(self.payload);
           self.bytesCopied += self.header.payloadLength;
-          emitFrame(self);
+          emitFrame(self, onTransform);
           return j;
         }
         chunk.slice(self.header.payloadOffset).copy(self.payload);
         self.bytesCopied += chunk.length - self.header.payloadOffset;
         self.state = 1;
       } else {
-        emitFrame(self);
+        emitFrame(self, onTransform);
         return j;
       }
       break;
@@ -198,7 +202,7 @@ function extractFrame(self, chunk_, offset, cb) {
       chunk.copy(self.payload, self.bytesCopied, 0, j);
       self.bytesCopied += j;
       if(self.bytesCopied === self.header.payloadLength) {
-        emitFrame(self);
+        emitFrame(self, onTransform);
         return j;
       }
       break;
@@ -206,16 +210,15 @@ function extractFrame(self, chunk_, offset, cb) {
   return j;
 }
 
-Rfc6455Protocol.prototype._write = function(chunk, encoding, cb) {
+Rfc6455TransformStream.prototype._transform = function(chunk, encoding, cb) {
   var self = this;
   var offset = 0;
   do {
     offset = extractFrame(self, chunk, offset, cb);
   } while(offset > 0);
-  cb();
 };
 
-Rfc6455Protocol.prototype.OPCODES = OPCODES;
-Rfc6455Protocol.prototype.OPCODE_NAMES = OPCODE_NAMES;
+Rfc6455TransformStream.prototype.OPCODES = OPCODES;
+Rfc6455TransformStream.prototype.OPCODE_NAMES = OPCODE_NAMES;
 
-module.exports = Rfc6455Protocol;
+module.exports = Rfc6455TransformStream;

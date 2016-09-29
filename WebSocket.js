@@ -1,10 +1,12 @@
 'use strict';
+var stream = require('stream');
 var events = require('events');
 var crypto = require('crypto');
 var util = require('util');
 var url = require('url');
 var net = require('net');
-var Rfc6455Protocol = require('./Rfc6455Protocol');
+// var Rfc6455Protocol = require('./Rfc6455Protocol');
+var Rfc6455TransformStream = require('./Rfc6455TransformStream');
 
 var READY_STATES = {
   CONNECTING: 0,
@@ -21,22 +23,26 @@ function buildWithSocket(self, maskFrames) {
   });
   self.socket.setKeepAlive(true, 0);
 
-  self.rfc6455Protocol = new Rfc6455Protocol(!!maskFrames,
+  self.rfc6455Protocol = new Rfc6455TransformStream(!!maskFrames,
     function(opcode, payload) {
-      payload = payload || '';
+      var OPCODES = Rfc6455TransformStream.prototype.OPCODES;
       switch(opcode) {
-        case Rfc6455Protocol.prototype.OPCODES.CLOSE:
+        case OPCODES.CLOSE:
           self.readyState = READY_STATES.CLOSED;
+          payload = payload || '1000';
           self.emit('close', payload.toString());
           break;
-        case Rfc6455Protocol.prototype.OPCODES.PING:
+        case OPCODES.PING:
           self.emit('ping', payload.toString());
           break;
-        case Rfc6455Protocol.prototype.OPCODES.PONG:
+        case OPCODES.PONG:
           self.emit('pong', payload.toString());
           break;
-        case Rfc6455Protocol.prototype.OPCODES.TEXT:
+        case OPCODES.TEXT:
           self.emit('message', payload.toString());
+          break;
+        case OPCODES.BINARY:
+          self.emit('data', payload);
           break;
       }
     }
@@ -55,12 +61,13 @@ function buildWithSocket(self, maskFrames) {
     self.emit('error', err);
   });
 
-  self.socket.once('close', function(payload) {
+  self.socket.once('close', function() {
     self.readyState = READY_STATES.CLOSED;
     self.emit('close', '1000');
   });
 
   self.readyState = READY_STATES.OPEN;
+
   self.socket.pipe(self.rfc6455Protocol);
 
   self.emit('connect');
@@ -115,21 +122,36 @@ function buildWithHandshake(self, url_, headers, maskFrames) {
 }
 
 function WebSocket(opts) {
-  var self = this;
-  self.readyState = READY_STATES.CLOSED;
+  if(!(this instanceof WebSocket)) {
+    return new WebSocket(opts);
+  }
+  events.EventEmitter.call(this);
+  stream.Writable.call(this);
+
+  this.readyState = READY_STATES.CLOSED;
   if(!('socket' in opts ^ 'url' in opts)) {
     throw new Error('Specify either URL or socket');
   }
   opts.maskFrames = !!opts.maskFrames;
   if('url' in opts) {
-    return buildWithHandshake(self, opts.url, !opts.headers ? {} : opts.headers,
+    return buildWithHandshake(this, opts.url, !opts.headers ? {} : opts.headers,
       opts.maskFrames);
   }
-  self.socket = opts.socket;
-  buildWithSocket(self, opts.maskFrames);
+  this.socket = opts.socket;
+  buildWithSocket(this, opts.maskFrames);
 }
-
 util.inherits(WebSocket, events.EventEmitter);
+util.inherits(WebSocket, stream.Writable);
+
+WebSocket.prototype.pipe = function(dst) {
+  this.rfc6455Protocol.pipe(dst);
+  return dst;
+};
+
+WebSocket.prototype._write = function(chunk, encoding, cb) {
+  this.socket.write(this.rfc6455Protocol.buildBinaryFrame(chunk));
+  cb(null);
+};
 
 WebSocket.prototype.send = function(data) {
   var self = this;
@@ -137,7 +159,9 @@ WebSocket.prototype.send = function(data) {
       self.readyState === READY_STATES.CLOSED) {
     return;
   }
-  self.socket.write(self.rfc6455Protocol.buildTextFrame(new Buffer(data)));
+  var method = 'build' + (typeof data === 'string' ? 'Text' : 'Binary') +
+    'Frame';
+  self.socket.write(self.rfc6455Protocol[method](Buffer.from(data)));
 };
 
 WebSocket.prototype.close = function(code) {
