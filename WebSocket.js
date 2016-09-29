@@ -5,7 +5,6 @@ var crypto = require('crypto');
 var util = require('util');
 var url = require('url');
 var net = require('net');
-// var Rfc6455Protocol = require('./Rfc6455Protocol');
 var Rfc6455TransformStream = require('./Rfc6455TransformStream');
 
 var READY_STATES = {
@@ -23,7 +22,7 @@ function buildWithSocket(self, maskFrames) {
   });
   self.socket.setKeepAlive(true, 0);
 
-  self.rfc6455Protocol = new Rfc6455TransformStream(!!maskFrames,
+  self.rfc6455Transformer = new Rfc6455TransformStream(!!maskFrames,
     function(opcode, payload) {
       var OPCODES = Rfc6455TransformStream.prototype.OPCODES;
       switch(opcode) {
@@ -48,7 +47,7 @@ function buildWithSocket(self, maskFrames) {
     }
   );
 
-  self.rfc6455Protocol.on('error', function(err) {
+  self.rfc6455Transformer.on('error', function(err) {
     self.emit('error', err);
   });
 
@@ -68,7 +67,7 @@ function buildWithSocket(self, maskFrames) {
 
   self.readyState = READY_STATES.OPEN;
 
-  self.socket.pipe(self.rfc6455Protocol);
+  self.socket.pipe(self.rfc6455Transformer);
 
   self.emit('connect');
 }
@@ -144,12 +143,12 @@ util.inherits(WebSocket, events.EventEmitter);
 util.inherits(WebSocket, stream.Writable);
 
 WebSocket.prototype.pipe = function(dst) {
-  this.rfc6455Protocol.pipe(dst);
+  this.rfc6455Transformer.pipe(dst);
   return dst;
 };
 
 WebSocket.prototype._write = function(chunk, encoding, cb) {
-  this.socket.write(this.rfc6455Protocol.buildBinaryFrame(chunk));
+  this.socket.write(this.rfc6455Transformer.buildBinaryFrame(chunk));
   cb(null);
 };
 
@@ -161,7 +160,7 @@ WebSocket.prototype.send = function(data) {
   }
   var method = 'build' + (typeof data === 'string' ? 'Text' : 'Binary') +
     'Frame';
-  self.socket.write(self.rfc6455Protocol[method](Buffer.from(data)));
+  self.socket.write(self.rfc6455Transformer[method](Buffer.from(data)));
 };
 
 WebSocket.prototype.close = function(code) {
@@ -173,7 +172,7 @@ WebSocket.prototype.close = function(code) {
   self.readyState = READY_STATES.CLOSING;
   code = code || '1000';
   try {
-    self.socket.end(self.rfc6455Protocol.buildCloseFrame(new Buffer(code)));
+    self.socket.end(self.rfc6455Transformer.buildCloseFrame(new Buffer(code)));
   } catch(ex) {
     self.socket.destroy();
   }
@@ -186,7 +185,7 @@ WebSocket.prototype.ping = function(data) {
     return;
   }
   data = data || 0;
-  self.socket.write(self.rfc6455Protocol.buildPingFrame(new Buffer(data)));
+  self.socket.write(self.rfc6455Transformer.buildPingFrame(new Buffer(data)));
 };
 
 WebSocket.prototype.pong = function(data) {
@@ -196,7 +195,7 @@ WebSocket.prototype.pong = function(data) {
     return;
   }
   data = data || 0;
-  self.socket.write(self.rfc6455Protocol.buildPongFrame(new Buffer(data)));
+  self.socket.write(self.rfc6455Transformer.buildPongFrame(new Buffer(data)));
 };
 
 WebSocket.prototype.READY_STATES = READY_STATES;
