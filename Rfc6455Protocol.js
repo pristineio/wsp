@@ -71,14 +71,6 @@ function initialize(self) {
   self.payload = null;
 }
 
-function emitFrame(self) {
-  if(self.header.isMasked) {
-    applyMask(self.payload, self.header.mask);
-  }
-  self.listener(self.header.opcode, self.payload);
-  initialize(self);
-}
-
 function buildFrame(self, buffer, opcode) {
   buffer = buffer || new Buffer(0).fill(0);
   var length = buffer.length;
@@ -114,7 +106,7 @@ function buildFrame(self, buffer, opcode) {
   return wsFrame;
 }
 
-function processHeader(chunk_, cb) {
+function processHeader(chunk_) {
   var header = {
     mask: null,
     validOpcode: false,
@@ -139,22 +131,22 @@ function processHeader(chunk_, cb) {
   header.payloadOffset = 2;
 
   if(!header.reservedBitsZero) {
-    return cb(new Error('RSV not zero'));
+    return new Error('RSV not zero');
   }
 
   if(!header.validOpcode) {
-    return cb(new Error('Unknown opcode'));
+    return new Error('Unknown opcode');
   }
 
   if(FRAGMENTED_OPCODES[header.opcode] !== 1 && !header.isFinal) {
-    return cb(new Error('Expected non-final packet'));
+    return new Error('Expected non-final packet');
   }
 
   if(header.payloadLength === 126) {
     header.payloadLength = chunk.readUInt16BE(2);
     header.payloadOffset = 4;
   } else if(header.payloadLength === 127) {
-    return cb(new Error('Unsupported UInt64 length'));
+    return new Error('Unsupported UInt64 length');
   }
 
   if(header.isMasked) {
@@ -166,7 +158,15 @@ function processHeader(chunk_, cb) {
   return header;
 }
 
-function extractFrame(self, chunk_, offset, cb) {
+function emitFrame(self) {
+  if(self.header.isMasked) {
+    applyMask(self.payload, self.header.mask);
+  }
+  self.listener(self.header.opcode, self.payload);
+  initialize(self);
+}
+
+function extractFrame(self, chunk_, offset) {
   var j = 0;
   var chunk = chunk_.slice(offset);
   if(chunk.length === 0) {
@@ -174,44 +174,46 @@ function extractFrame(self, chunk_, offset, cb) {
   }
   switch(self.state) {
     case 0:
-      self.header = processHeader(chunk, cb);
-      if(self.header.payloadLength > 0) {
-        self.payload = new Buffer(self.header.payloadLength).fill(0);
-        if(self.header.payloadLength <= chunk.length) {
-          j = self.header.payloadLength + self.header.payloadOffset + offset;
-          chunk.slice(self.header.payloadOffset, j).copy(self.payload);
-          self.bytesCopied += self.header.payloadLength;
-          emitFrame(self);
-          return j;
-        }
-        chunk.slice(self.header.payloadOffset).copy(self.payload);
-        self.bytesCopied += chunk.length - self.header.payloadOffset;
-        self.state = 1;
-      } else {
-        emitFrame(self);
-        return j;
+      var result = processHeader(chunk);
+      if(result instanceof Error) {
+        self.emit('error', result);
+        return 0;
       }
+      self.header = result;
+      if(self.header.payloadLength === 0) {
+        emitFrame(self);
+        return 0;
+      }
+      self.payload = new Buffer(self.header.payloadLength).fill(0);
+      if(self.header.payloadLength <= chunk.length) {
+        j = self.header.payloadLength + self.header.payloadOffset + offset;
+        chunk.slice(self.header.payloadOffset, j).copy(self.payload);
+        self.bytesCopied += self.header.payloadLength;
+        emitFrame(self);
+        return 0;
+      }
+      chunk.slice(self.header.payloadOffset).copy(self.payload);
+      self.bytesCopied += chunk.length - self.header.payloadOffset;
+      self.state = 1;
       break;
-
     case 1:
       j = Math.min(chunk.length, self.header.payloadLength - self.bytesCopied);
       chunk.copy(self.payload, self.bytesCopied, 0, j);
       self.bytesCopied += j;
       if(self.bytesCopied === self.header.payloadLength) {
         emitFrame(self);
-        return j;
+        return 0;
       }
       break;
   }
   return j;
 }
 
-
 Rfc6455Protocol.prototype._write = function(chunk, encoding, cb) {
   var self = this;
   var offset = 0;
   do {
-    offset = extractFrame(self, chunk, offset, cb);
+    offset = extractFrame(self, chunk, offset);
   } while(offset > 0);
   cb();
 };
