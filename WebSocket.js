@@ -32,12 +32,15 @@ function buildWithSocket(self, maskFrames) {
           self.emit('close', payload.toString());
           break;
         case OPCODES.PING:
+          payload = payload || '';
           self.emit('ping', payload.toString());
           break;
         case OPCODES.PONG:
+          payload = payload || '';
           self.emit('pong', payload.toString());
           break;
         case OPCODES.TEXT:
+          payload = payload || '';
           self.emit('message', payload.toString());
           break;
         case OPCODES.BINARY:
