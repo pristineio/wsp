@@ -166,11 +166,18 @@ function emitFrame(self, cb) {
     applyMask(self.payload, self.header.mask);
   }
   self.listener(self.header.opcode, self.payload);
-  cb(null, self.payload);
-  initialize(self);
+  try {
+    cb(null, self.payload);
+  } catch(err) {
+    console.log(err.stack);
+    self.emit('error', err);
+  }
 }
 
 function extractFrame(self, chunk_, offset, onTransform) {
+  if(offset === 0) {
+    initialize(self);
+  }
   var j = 0;
   var chunk = chunk_.slice(offset);
   if(chunk.length === 0) {
@@ -186,6 +193,8 @@ function extractFrame(self, chunk_, offset, onTransform) {
           chunk.slice(self.header.payloadOffset, j).copy(self.payload);
           self.bytesCopied += self.header.payloadLength;
           emitFrame(self, onTransform);
+          // console.log('-------- ', j);
+          // console.log(self.payload.toString('utf8'));
           return j;
         }
         chunk.slice(self.header.payloadOffset).copy(self.payload);
