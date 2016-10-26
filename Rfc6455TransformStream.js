@@ -109,7 +109,7 @@ function buildFrame(self, buffer, opcode) {
   return wsFrame;
 }
 
-function processHeader(chunk_, cb) {
+function processHeader(chunk_) {
   var header = {
     mask: null,
     validOpcode: false,
@@ -134,22 +134,22 @@ function processHeader(chunk_, cb) {
   header.payloadOffset = 2;
 
   if(!header.reservedBitsZero) {
-    return cb(new Error('RSV not zero'));
+    return new Error('RSV not zero');
   }
 
   if(!header.validOpcode) {
-    return cb(new Error('Unknown opcode'));
+    return new Error('Unknown opcode');
   }
 
   if(FRAGMENTED_OPCODES[header.opcode] !== 1 && !header.isFinal) {
-    return cb(new Error('Expected non-final packet'));
+    return new Error('Expected non-final packet');
   }
 
   if(header.payloadLength === 126) {
     header.payloadLength = chunk.readUInt16BE(2);
     header.payloadOffset = 4;
   } else if(header.payloadLength === 127) {
-    return cb(new Error('Unsupported UInt64 length'));
+    return new Error('Unsupported UInt64 length');
   }
 
   if(header.isMasked) {
@@ -161,20 +161,14 @@ function processHeader(chunk_, cb) {
   return header;
 }
 
-function emitFrame(self, cb) {
+function emitFrame(self) {
   if(self.header.isMasked) {
     applyMask(self.payload, self.header.mask);
   }
   self.listener(self.header.opcode, self.payload);
-  try {
-    cb(null, self.payload);
-  } catch(err) {
-    console.log(err.stack);
-    self.emit('error', err);
-  }
 }
 
-function extractFrame(self, chunk_, offset, onTransform) {
+function extractFrame(self, chunk_, offset) {
   if(offset === 0) {
     initialize(self);
   }
@@ -185,34 +179,32 @@ function extractFrame(self, chunk_, offset, onTransform) {
   }
   switch(self.state) {
     case 0:
-      self.header = processHeader(chunk, onTransform);
-      if(self.header.payloadLength > 0) {
-        self.payload = new Buffer(self.header.payloadLength).fill(0);
-        if(self.header.payloadLength <= chunk.length) {
-          j = self.header.payloadLength + self.header.payloadOffset + offset;
-          chunk.slice(self.header.payloadOffset, j).copy(self.payload);
-          self.bytesCopied += self.header.payloadLength;
-          emitFrame(self, onTransform);
-          // console.log('-------- ', j);
-          // console.log(self.payload.toString('utf8'));
-          return j;
-        }
-        chunk.slice(self.header.payloadOffset).copy(self.payload);
-        self.bytesCopied += chunk.length - self.header.payloadOffset;
-        self.state = 1;
-      } else {
-        emitFrame(self, onTransform);
-        return j;
+      var result = processHeader(chunk);
+      if(result instanceof Error) {
+        self.emit('error', result);
+        return 0;
       }
+      self.header = result;
+      if(self.header.payloadLength === 0) {
+        return 0;
+      }
+      self.payload = new Buffer(self.header.payloadLength).fill(0);
+      if(self.header.payloadLength <= chunk.length) {
+        j = self.header.payloadLength + self.header.payloadOffset + offset;
+        chunk.slice(self.header.payloadOffset, j).copy(self.payload);
+        self.bytesCopied += self.header.payloadLength;
+        return 0;
+      }
+      chunk.slice(self.header.payloadOffset).copy(self.payload);
+      self.bytesCopied += chunk.length - self.header.payloadOffset;
+      self.state = 1;
       break;
-
     case 1:
       j = Math.min(chunk.length, self.header.payloadLength - self.bytesCopied);
       chunk.copy(self.payload, self.bytesCopied, 0, j);
       self.bytesCopied += j;
       if(self.bytesCopied === self.header.payloadLength) {
-        emitFrame(self, onTransform);
-        return j;
+        return 0;
       }
       break;
   }
@@ -222,9 +214,9 @@ function extractFrame(self, chunk_, offset, onTransform) {
 Rfc6455TransformStream.prototype._transform = function(chunk, encoding, cb) {
   var self = this;
   var offset = 0;
-  do {
-    offset = extractFrame(self, chunk, offset, cb);
-  } while(offset > 0);
+  do { offset = extractFrame(self, chunk, offset); } while(offset > 0);
+  emitFrame(self);
+  cb();
 };
 
 Rfc6455TransformStream.prototype.OPCODES = OPCODES;
