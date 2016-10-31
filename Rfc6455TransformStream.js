@@ -1,5 +1,4 @@
 'use strict';
-var util = require('util');
 var stream = require('stream');
 var crypto = require('crypto');
 
@@ -43,70 +42,6 @@ function applyMask(payload, mask, offset) {
     var x = offset+i;
     payload[x] = payload[x] ^ mask[i%4];
   }
-}
-
-function Rfc6455TransformStream(isMasking, listener) {
-  if(!(this instanceof Rfc6455TransformStream)) {
-    return new Rfc6455TransformStream(isMasking);
-  }
-  this.listener = listener || function() {};
-  stream.Transform.call(this);
-  this.isMasking = !!isMasking;
-  initialize(this);
-}
-util.inherits(Rfc6455TransformStream, stream.Transform);
-
-var OPCODE_NAMES = new Array(11).fill('undefined');
-Object.keys(OPCODES).forEach(function(opCodeName) {
-  OPCODE_NAMES[OPCODES[opCodeName]] = opCodeName.toLowerCase();
-  var niceName = opCodeName.substring(0,1).toUpperCase() +
-    opCodeName.substring(1).toLowerCase();
-  var method = 'build' + niceName + 'Frame';
-  Rfc6455TransformStream.prototype[method] = function(buffer) {
-    return buildFrame(this, buffer, OPCODES[opCodeName]);
-  };
-});
-
-function initialize(self) {
-  self.bytesCopied = 0;
-  self.state = 0;
-  self.header = null;
-  self.payload = null;
-}
-
-function buildFrame(self, buffer, opcode) {
-  buffer = buffer || new Buffer(0).fill(0);
-  var length = buffer.length;
-  var header = (length <= 125) ? 2 : (length <= 65535 ? 4 : 10);
-  var offset = header + (self.isMasking ? 4 : 0);
-  var masked = self.isMasking ? MASK : 0;
-  var wsFrame = new Buffer(length + offset);
-  wsFrame.fill(0);
-  wsFrame[0] = FIN | opcode;
-  if(length <= 125) {
-    wsFrame[1] = masked | length;
-  } else if(length <= 65535) {
-    wsFrame[1] = masked | 126;
-    wsFrame[2] = Math.floor(length / 256);
-    wsFrame[3] = length & BYTE;
-  } else {
-    wsFrame[1] = masked | 127;
-    wsFrame[2] = Math.floor(length / Math.pow(2,56)) & BYTE;
-    wsFrame[3] = Math.floor(length / Math.pow(2,48)) & BYTE;
-    wsFrame[4] = Math.floor(length / Math.pow(2,40)) & BYTE;
-    wsFrame[5] = Math.floor(length / Math.pow(2,32)) & BYTE;
-    wsFrame[6] = Math.floor(length / Math.pow(2,24)) & BYTE;
-    wsFrame[7] = Math.floor(length / Math.pow(2,16)) & BYTE;
-    wsFrame[8] = Math.floor(length / Math.pow(2,8)) & BYTE;
-    wsFrame[9] = length & BYTE;
-  }
-  buffer.copy(wsFrame, offset, 0, buffer.length);
-  if(self.isMasking) {
-    var mask = crypto.randomBytes(4);
-    mask.copy(wsFrame, header, 0, 4);
-    applyMask(wsFrame, mask, offset);
-  }
-  return wsFrame;
 }
 
 function processHeader(chunk_) {
@@ -161,63 +96,118 @@ function processHeader(chunk_) {
   return header;
 }
 
-function emitFrame(self) {
-  if(self.header.isMasked) {
-    applyMask(self.payload, self.header.mask);
+class Rfc6455TransformStream extends stream.Transform {
+  constructor(options) {
+    super({transform: function(chunk, encoding, cb) {
+      this.listener = options.listener || function() {};
+      this.isMasking = !!options.isMasking;
+      this.initialize();
+      var offset = 0;
+      do { offset = this.extractFrame(chunk, offset); } while(offset > 0);
+      if(this.header.isMasked) {
+        applyMask(this.payload, this.header.mask);
+      }
+      this.listener(this.header.opcode, this.payload);
+      cb();
+    }});
   }
-  self.listener(self.header.opcode, self.payload);
-}
 
-function extractFrame(self, chunk_, offset) {
-  if(offset === 0) {
-    initialize(self);
+  initialize() {
+    this.bytesCopied = 0;
+    this.state = 0;
+    this.header = null;
+    this.payload = null;
   }
-  var j = 0;
-  var chunk = chunk_.slice(offset);
-  if(chunk.length === 0) {
+
+  buildFrame(buffer, opcode) {
+    buffer = buffer || new Buffer(0).fill(0);
+    var length = buffer.length;
+    var header = (length <= 125) ? 2 : (length <= 65535 ? 4 : 10);
+    var offset = header + (this.isMasking ? 4 : 0);
+    var masked = this.isMasking ? MASK : 0;
+    var wsFrame = new Buffer(length + offset);
+    wsFrame.fill(0);
+    wsFrame[0] = FIN | opcode;
+    if(length <= 125) {
+      wsFrame[1] = masked | length;
+    } else if(length <= 65535) {
+      wsFrame[1] = masked | 126;
+      wsFrame[2] = Math.floor(length / 256);
+      wsFrame[3] = length & BYTE;
+    } else {
+      wsFrame[1] = masked | 127;
+      wsFrame[2] = Math.floor(length / Math.pow(2,56)) & BYTE;
+      wsFrame[3] = Math.floor(length / Math.pow(2,48)) & BYTE;
+      wsFrame[4] = Math.floor(length / Math.pow(2,40)) & BYTE;
+      wsFrame[5] = Math.floor(length / Math.pow(2,32)) & BYTE;
+      wsFrame[6] = Math.floor(length / Math.pow(2,24)) & BYTE;
+      wsFrame[7] = Math.floor(length / Math.pow(2,16)) & BYTE;
+      wsFrame[8] = Math.floor(length / Math.pow(2,8)) & BYTE;
+      wsFrame[9] = length & BYTE;
+    }
+    buffer.copy(wsFrame, offset, 0, buffer.length);
+    if(this.isMasking) {
+      var mask = crypto.randomBytes(4);
+      mask.copy(wsFrame, header, 0, 4);
+      applyMask(wsFrame, mask, offset);
+    }
+    return wsFrame;
+  }
+
+  extractFrame(chunk_, offset) {
+    if(offset === 0) {
+      this.initialize();
+    }
+    var j = 0;
+    var chunk = chunk_.slice(offset);
+    if(chunk.length === 0) {
+      return j;
+    }
+    switch(this.state) {
+      case 0:
+        var result = processHeader(chunk);
+        if(result instanceof Error) {
+          this.emit('error', result);
+          return 0;
+        }
+        this.header = result;
+        if(this.header.payloadLength === 0) {
+          return 0;
+        }
+        this.payload = new Buffer(this.header.payloadLength).fill(0);
+        if(this.header.payloadLength <= chunk.length) {
+          j = this.header.payloadLength + this.header.payloadOffset + offset;
+          chunk.slice(this.header.payloadOffset, j).copy(this.payload);
+          this.bytesCopied += this.header.payloadLength;
+          return 0;
+        }
+        chunk.slice(this.header.payloadOffset).copy(this.payload);
+        this.bytesCopied += chunk.length - this.header.payloadOffset;
+        this.state = 1;
+        break;
+      case 1:
+        j = Math.min(chunk.length, this.header.payloadLength - this.bytesCopied);
+        chunk.copy(this.payload, this.bytesCopied, 0, j);
+        this.bytesCopied += j;
+        if(this.bytesCopied === this.header.payloadLength) {
+          return 0;
+        }
+        break;
+    }
     return j;
   }
-  switch(self.state) {
-    case 0:
-      var result = processHeader(chunk);
-      if(result instanceof Error) {
-        self.emit('error', result);
-        return 0;
-      }
-      self.header = result;
-      if(self.header.payloadLength === 0) {
-        return 0;
-      }
-      self.payload = new Buffer(self.header.payloadLength).fill(0);
-      if(self.header.payloadLength <= chunk.length) {
-        j = self.header.payloadLength + self.header.payloadOffset + offset;
-        chunk.slice(self.header.payloadOffset, j).copy(self.payload);
-        self.bytesCopied += self.header.payloadLength;
-        return 0;
-      }
-      chunk.slice(self.header.payloadOffset).copy(self.payload);
-      self.bytesCopied += chunk.length - self.header.payloadOffset;
-      self.state = 1;
-      break;
-    case 1:
-      j = Math.min(chunk.length, self.header.payloadLength - self.bytesCopied);
-      chunk.copy(self.payload, self.bytesCopied, 0, j);
-      self.bytesCopied += j;
-      if(self.bytesCopied === self.header.payloadLength) {
-        return 0;
-      }
-      break;
-  }
-  return j;
 }
 
-Rfc6455TransformStream.prototype._transform = function(chunk, encoding, cb) {
-  var self = this;
-  var offset = 0;
-  do { offset = extractFrame(self, chunk, offset); } while(offset > 0);
-  emitFrame(self);
-  cb();
-};
+var OPCODE_NAMES = new Array(11).fill('undefined');
+Object.keys(OPCODES).forEach(function(opCodeName) {
+  OPCODE_NAMES[OPCODES[opCodeName]] = opCodeName.toLowerCase();
+  var niceName = opCodeName.substring(0,1).toUpperCase() +
+    opCodeName.substring(1).toLowerCase();
+  var method = 'build' + niceName + 'Frame';
+  Rfc6455TransformStream.prototype[method] = function(buffer) {
+    return this.buildFrame(buffer, OPCODES[opCodeName]);
+  };
+});
 
 Rfc6455TransformStream.prototype.OPCODES = OPCODES;
 Rfc6455TransformStream.prototype.OPCODE_NAMES = OPCODE_NAMES;

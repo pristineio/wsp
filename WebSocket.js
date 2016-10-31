@@ -22,8 +22,9 @@ function buildWithSocket(self, maskFrames) {
   });
   self.socket.setKeepAlive(true, 0);
 
-  self.rfc6455Transformer = new Rfc6455TransformStream(!!maskFrames,
-    function(opcode, payload) {
+  self.rfc6455Transformer = new Rfc6455TransformStream({
+    maskFrames: !!maskFrames,
+    listener: function(opcode, payload) {
       var OPCODES = Rfc6455TransformStream.prototype.OPCODES;
       switch(opcode) {
         case OPCODES.CLOSE:
@@ -48,7 +49,7 @@ function buildWithSocket(self, maskFrames) {
           break;
       }
     }
-  );
+  });
 
   self.rfc6455Transformer.on('error', function(err) {
     self.emit('error', err);
