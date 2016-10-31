@@ -25,7 +25,7 @@ function buildWithSocket(self, maskFrames) {
   self.rfc6455Transformer = new Rfc6455TransformStream({
     maskFrames: !!maskFrames,
     listener: function(opcode, payload) {
-      var OPCODES = Rfc6455TransformStream.prototype.OPCODES;
+      var OPCODES = Rfc6455TransformStream.OPCODES;
       switch(opcode) {
         case OPCODES.CLOSE:
           self.readyState = READY_STATES.CLOSED;

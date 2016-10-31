@@ -207,7 +207,7 @@ rules:
   - double
   radix: 0
   require-yield: 0
-  semi: 0
+  semi: 2
   semi-spacing:
   - 0
   - before: false

@@ -2,15 +2,6 @@
 var stream = require('stream');
 var crypto = require('crypto');
 
-var OPCODES = {
-  CONTINUATION: 0,
-  TEXT: 1,
-  BINARY: 2,
-  CLOSE: 8,
-  PING: 9,
-  PONG: 10
-};
-
 var VALID_OPCODES = new Array(11).fill(0);
 VALID_OPCODES[0] = 1;
 VALID_OPCODES[1] = 1;
@@ -97,7 +88,28 @@ function processHeader(chunk_) {
 }
 
 class Rfc6455TransformStream extends stream.Transform {
+  static get OPCODES() {
+    return {
+      CONTINUATION: 0,
+      TEXT: 1,
+      BINARY: 2,
+      CLOSE: 8,
+      PING: 9,
+      PONG: 10
+    };
+  }
+
   constructor(options) {
+    Object.keys(Rfc6455TransformStream.OPCODES).forEach(function(opCodeName) {
+      var opcode = Rfc6455TransformStream.OPCODES[opCodeName];
+      var niceName = opCodeName.charAt(0).toUpperCase() +
+        opCodeName.substring(1).toLowerCase();
+      var method = 'build' + niceName + 'Frame';
+      Rfc6455TransformStream.prototype[method] = function(buffer) {
+        return this.buildFrame(buffer, opcode);
+      };
+    });
+
     super({transform: function(chunk, encoding, cb) {
       this.listener = options.listener || function() {};
       this.isMasking = !!options.isMasking;
@@ -197,19 +209,5 @@ class Rfc6455TransformStream extends stream.Transform {
     return j;
   }
 }
-
-var OPCODE_NAMES = new Array(11).fill('undefined');
-Object.keys(OPCODES).forEach(function(opCodeName) {
-  OPCODE_NAMES[OPCODES[opCodeName]] = opCodeName.toLowerCase();
-  var niceName = opCodeName.substring(0,1).toUpperCase() +
-    opCodeName.substring(1).toLowerCase();
-  var method = 'build' + niceName + 'Frame';
-  Rfc6455TransformStream.prototype[method] = function(buffer) {
-    return this.buildFrame(buffer, OPCODES[opCodeName]);
-  };
-});
-
-Rfc6455TransformStream.prototype.OPCODES = OPCODES;
-Rfc6455TransformStream.prototype.OPCODE_NAMES = OPCODE_NAMES;
 
 module.exports = Rfc6455TransformStream;
