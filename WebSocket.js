@@ -135,61 +135,57 @@ class WebSocket extends stream.Writable {
     });
   }
 
-  pipe(dst) {
-    this.rfc6455Transformer.pipe(dst);
-    return dst;
-  }
-
   _write(chunk, encoding, cb) {
     this.socket.write(this.rfc6455Transformer.buildBinaryFrame(chunk));
     cb(null);
   }
 
-  _checkClosed() {
+  _isClosed() {
     return this.readyState === WebSocket.READY_STATES.CLOSING ||
       this.readyState === WebSocket.READY_STATES.CLOSED;
   }
 
+  pipe(dst) {
+    this.rfc6455Transformer.pipe(dst);
+    return dst;
+  }
+
   send(data) {
-    var self = this;
-    if(self._checkClosed()) {
+    if(this._isClosed()) {
       return;
     }
     var method = 'build' + (typeof data === 'string' ? 'Text' : 'Binary') +
       'Frame';
-    self.socket.write(self.rfc6455Transformer[method](Buffer.from(data)));
+    this.socket.write(this.rfc6455Transformer[method](Buffer.from(data)));
   }
 
   close(code) {
-    var self = this;
-    if(self._checkClosed()) {
+    if(this._isClosed()) {
       return;
     }
-    self.readyState = WebSocket.READY_STATES.CLOSING;
-    code = code || '1000';
+    this.readyState = WebSocket.READY_STATES.CLOSING;
+    var fn = this.rfc6455Transformer.buildCloseFrame;
     try {
-      self.socket.end(self.rfc6455Transformer.buildCloseFrame(new Buffer(code)));
+      this.socket.end(fn(Buffer.from(code || '1000')));
     } catch(ex) {
-      self.socket.destroy();
+      this.socket.destroy();
     }
   }
 
   ping(data) {
-    var self = this;
-    if(self._checkClosed()) {
+    if(this._isClosed()) {
       return;
     }
-    data = data || 0;
-    self.socket.write(self.rfc6455Transformer.buildPingFrame(new Buffer(data)));
+    var fn = this.rfc6455Transformer.buildPingFrame;
+    this.socket.write(fn(Buffer.from(data || '')));
   }
 
   pong(data) {
-    var self = this;
-    if(self._checkClosed()) {
+    if(this._isClosed()) {
       return;
     }
-    data = data || 0;
-    self.socket.write(self.rfc6455Transformer.buildPongFrame(new Buffer(data)));
+    var fn = this.rfc6455Transformer.buildPongFrame;
+    this.socket.write(fn(Buffer.from(data || '')));
   }
 }
 

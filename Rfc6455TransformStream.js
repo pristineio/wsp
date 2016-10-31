@@ -100,16 +100,6 @@ class Rfc6455TransformStream extends stream.Transform {
   }
 
   constructor(options) {
-    Object.keys(Rfc6455TransformStream.OPCODES).forEach(function(opCodeName) {
-      var opcode = Rfc6455TransformStream.OPCODES[opCodeName];
-      var niceName = opCodeName.charAt(0).toUpperCase() +
-        opCodeName.substring(1).toLowerCase();
-      var method = 'build' + niceName + 'Frame';
-      Rfc6455TransformStream.prototype[method] = function(buffer) {
-        return this.buildFrame(buffer, opcode);
-      };
-    });
-
     super({transform: function(chunk, encoding, cb) {
       this.listener = options.listener || function() {};
       this.isMasking = !!options.isMasking;
@@ -122,6 +112,48 @@ class Rfc6455TransformStream extends stream.Transform {
       this.listener(this.header.opcode, this.payload);
       cb();
     }});
+
+    var self = this;
+    Object.keys(Rfc6455TransformStream.OPCODES).forEach(function(opCodeName) {
+      var opcode = Rfc6455TransformStream.OPCODES[opCodeName];
+      var niceName = opCodeName.charAt(0).toUpperCase() +
+        opCodeName.substring(1).toLowerCase();
+      var method = 'build' + niceName + 'Frame';
+      Rfc6455TransformStream.prototype[method] = function(buffer) {
+        buffer = buffer || new Buffer(0).fill(0);
+        var length = buffer.length;
+        var header = (length <= 125) ? 2 : (length <= 65535 ? 4 : 10);
+        var offset = header + (self.isMasking ? 4 : 0);
+        var masked = self.isMasking ? MASK : 0;
+        var wsFrame = new Buffer(length + offset);
+        wsFrame.fill(0);
+        wsFrame[0] = FIN | opcode;
+        if(length <= 125) {
+          wsFrame[1] = masked | length;
+        } else if(length <= 65535) {
+          wsFrame[1] = masked | 126;
+          wsFrame[2] = Math.floor(length / 256);
+          wsFrame[3] = length & BYTE;
+        } else {
+          wsFrame[1] = masked | 127;
+          wsFrame[2] = Math.floor(length / Math.pow(2,56)) & BYTE;
+          wsFrame[3] = Math.floor(length / Math.pow(2,48)) & BYTE;
+          wsFrame[4] = Math.floor(length / Math.pow(2,40)) & BYTE;
+          wsFrame[5] = Math.floor(length / Math.pow(2,32)) & BYTE;
+          wsFrame[6] = Math.floor(length / Math.pow(2,24)) & BYTE;
+          wsFrame[7] = Math.floor(length / Math.pow(2,16)) & BYTE;
+          wsFrame[8] = Math.floor(length / Math.pow(2,8)) & BYTE;
+          wsFrame[9] = length & BYTE;
+        }
+        buffer.copy(wsFrame, offset, 0, buffer.length);
+        if(self.isMasking) {
+          var mask = crypto.randomBytes(4);
+          mask.copy(wsFrame, header, 0, 4);
+          applyMask(wsFrame, mask, offset);
+        }
+        return wsFrame;
+      };
+    });
   }
 
   initialize() {
@@ -129,41 +161,6 @@ class Rfc6455TransformStream extends stream.Transform {
     this.state = 0;
     this.header = null;
     this.payload = null;
-  }
-
-  buildFrame(buffer, opcode) {
-    buffer = buffer || new Buffer(0).fill(0);
-    var length = buffer.length;
-    var header = (length <= 125) ? 2 : (length <= 65535 ? 4 : 10);
-    var offset = header + (this.isMasking ? 4 : 0);
-    var masked = this.isMasking ? MASK : 0;
-    var wsFrame = new Buffer(length + offset);
-    wsFrame.fill(0);
-    wsFrame[0] = FIN | opcode;
-    if(length <= 125) {
-      wsFrame[1] = masked | length;
-    } else if(length <= 65535) {
-      wsFrame[1] = masked | 126;
-      wsFrame[2] = Math.floor(length / 256);
-      wsFrame[3] = length & BYTE;
-    } else {
-      wsFrame[1] = masked | 127;
-      wsFrame[2] = Math.floor(length / Math.pow(2,56)) & BYTE;
-      wsFrame[3] = Math.floor(length / Math.pow(2,48)) & BYTE;
-      wsFrame[4] = Math.floor(length / Math.pow(2,40)) & BYTE;
-      wsFrame[5] = Math.floor(length / Math.pow(2,32)) & BYTE;
-      wsFrame[6] = Math.floor(length / Math.pow(2,24)) & BYTE;
-      wsFrame[7] = Math.floor(length / Math.pow(2,16)) & BYTE;
-      wsFrame[8] = Math.floor(length / Math.pow(2,8)) & BYTE;
-      wsFrame[9] = length & BYTE;
-    }
-    buffer.copy(wsFrame, offset, 0, buffer.length);
-    if(this.isMasking) {
-      var mask = crypto.randomBytes(4);
-      mask.copy(wsFrame, header, 0, 4);
-      applyMask(wsFrame, mask, offset);
-    }
-    return wsFrame;
   }
 
   extractFrame(chunk_, offset) {
@@ -198,7 +195,8 @@ class Rfc6455TransformStream extends stream.Transform {
         this.state = 1;
         break;
       case 1:
-        j = Math.min(chunk.length, this.header.payloadLength - this.bytesCopied);
+        j = Math.min(chunk.length, this.header.payloadLength -
+          this.bytesCopied);
         chunk.copy(this.payload, this.bytesCopied, 0, j);
         this.bytesCopied += j;
         if(this.bytesCopied === this.header.payloadLength) {
