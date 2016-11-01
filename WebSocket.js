@@ -6,13 +6,6 @@ var url = require('url');
 var net = require('net');
 var Rfc6455Protocol = require('./Rfc6455Protocol');
 
-var READY_STATES = {
-  CONNECTING: 0,
-  OPEN: 1,
-  CLOSING: 2,
-  CLOSED: 3
-};
-
 function buildWithSocket(self, maskFrames) {
   self.socket.setNoDelay(true);
   self.socket.setTimeout(0, function() {
@@ -130,6 +123,15 @@ function WebSocket(opts) {
 }
 
 util.inherits(WebSocket, events.EventEmitter);
+
+WebSocket.READY_STATES = {
+  CONNECTING: 0,
+  OPEN: 1,
+  CLOSING: 2,
+  CLOSED: 3
+};
+
+var READY_STATES = WebSocket.READY_STATES;
 
 WebSocket.prototype.send = function(data) {
   var self = this;
