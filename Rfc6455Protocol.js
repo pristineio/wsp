@@ -69,15 +69,16 @@ function initialize(self) {
   self.state = 0;
   self.header = null;
   self.payload = null;
+  self.headerBuffer = Buffer.alloc(0);
 }
 
 function buildFrame(self, buffer, opcode) {
-  buffer = buffer || new Buffer(0).fill(0);
+  buffer = buffer || Buffer.alloc(0);
   var length = buffer.length;
   var header = (length <= 125) ? 2 : (length <= 65535 ? 4 : 10);
   var offset = header + (self.isMasking ? 4 : 0);
   var masked = self.isMasking ? MASK : 0;
-  var wsFrame = new Buffer(length + offset);
+  var wsFrame = Buffer.alloc(length + offset);
   wsFrame.fill(0);
   wsFrame[0] = FIN | opcode;
   if(length <= 125) {
@@ -151,7 +152,7 @@ function processHeader(chunk_) {
 
   if(header.isMasked) {
     header.payloadOffset += 4;
-    header.mask = new Buffer(4).fill(0);
+    header.mask = Buffer.alloc(4);
     chunk.slice(header.payloadOffset-4, header.payloadOffset).copy(header.mask);
   }
 
@@ -174,7 +175,11 @@ function extractFrame(self, chunk_, offset) {
   }
   switch(self.state) {
     case 0:
-      var result = processHeader(chunk);
+      self.headerBuffer = Buffer.concat([self.headerBuffer, chunk]);
+      if(self.headerBuffer.length < 8) {
+        return 0;
+      }
+      var result = processHeader(self.headerBuffer);
       if(result instanceof Error) {
         self.emit('error', result);
         return 0;
@@ -184,16 +189,20 @@ function extractFrame(self, chunk_, offset) {
         emitFrame(self);
         return 0;
       }
-      self.payload = new Buffer(self.header.payloadLength).fill(0);
-      if(self.header.payloadLength <= chunk.length) {
+      self.payload = Buffer.alloc(self.header.payloadLength);
+      if(self.header.payloadLength <= self.headerBuffer.length) {
         j = self.header.payloadLength + self.header.payloadOffset + offset;
-        chunk.slice(self.header.payloadOffset, j).copy(self.payload);
+        self.headerBuffer.slice(self.header.payloadOffset, j)
+          .copy(self.payload);
         self.bytesCopied += self.header.payloadLength;
         emitFrame(self);
-        return 0;
+        return j;
       }
-      chunk.slice(self.header.payloadOffset).copy(self.payload);
-      self.bytesCopied += chunk.length - self.header.payloadOffset;
+      if(self.header.payloadOffset < self.headerBuffer.length) {
+        self.headerBuffer.slice(self.header.payloadOffset).copy(self.payload);
+        self.bytesCopied += self.headerBuffer.length -
+          self.header.payloadOffset;
+      }
       self.state = 1;
       break;
     case 1:
@@ -202,7 +211,7 @@ function extractFrame(self, chunk_, offset) {
       self.bytesCopied += j;
       if(self.bytesCopied === self.header.payloadLength) {
         emitFrame(self);
-        return 0;
+        return j;
       }
       break;
   }
