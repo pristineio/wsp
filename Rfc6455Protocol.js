@@ -143,19 +143,6 @@ function processHeader(chunk_) {
     return new Error('Expected non-final packet');
   }
 
-  if(header.payloadLength === 126) {
-    header.payloadLength = chunk.readUInt16BE(2);
-    header.payloadOffset = 4;
-  } else if(header.payloadLength === 127) {
-    return new Error('Unsupported UInt64 length');
-  }
-
-  if(header.isMasked) {
-    header.payloadOffset += 4;
-    header.mask = Buffer.alloc(4);
-    chunk.slice(header.payloadOffset-4, header.payloadOffset).copy(header.mask);
-  }
-
   return header;
 }
 
@@ -176,7 +163,7 @@ function extractFrame(self, chunk_, offset) {
   switch(self.state) {
     case 0:
       self.headerBuffer = Buffer.concat([self.headerBuffer, chunk]);
-      if(self.headerBuffer.length < 4) {
+      if(self.headerBuffer.length < 2) {
         return 0;
       }
       var result = processHeader(self.headerBuffer);
@@ -188,6 +175,24 @@ function extractFrame(self, chunk_, offset) {
       if(self.header.payloadLength === 0) {
         emitFrame(self);
         return 0;
+      }
+      if(self.header.payloadLength === 126) {
+        if(self.headerBuffer.length < 4) {
+          return 0;
+        }
+        self.header.payloadLength = self.headerBuffer.readUInt16BE(2);
+        self.header.payloadOffset = 4;
+      } else if(self.header.payloadLength === 127) {
+        return new Error('Unsupported UInt64 length');
+      }
+      if(self.header.isMasked) {
+        self.header.payloadOffset += 4;
+        self.header.mask = Buffer.alloc(4);
+        if(self.headerBuffer.length < self.header.payloadOffset) {
+          return 0;
+        }
+        self.headerBuffer.slice(self.header.payloadOffset-4,
+          self.header.payloadOffset).copy(self.header.mask);
       }
       self.payload = Buffer.alloc(self.header.payloadLength);
       if(self.header.payloadLength <= self.headerBuffer.length) {
