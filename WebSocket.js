@@ -139,7 +139,7 @@ WebSocket.prototype.send = function(data) {
       self.readyState === READY_STATES.CLOSED) {
     return;
   }
-  self.socket.write(self.rfc6455Protocol.buildTextFrame(Buffer.alloc(data)));
+  self.socket.write(self.rfc6455Protocol.buildTextFrame(Buffer.from(data)));
 };
 
 WebSocket.prototype.close = function(code) {
@@ -151,7 +151,7 @@ WebSocket.prototype.close = function(code) {
   self.readyState = READY_STATES.CLOSING;
   code = code || '1000';
   try {
-    self.socket.end(self.rfc6455Protocol.buildCloseFrame(Buffer.alloc(code)));
+    self.socket.end(self.rfc6455Protocol.buildCloseFrame(Buffer.from(code)));
   } catch(ex) {
     self.socket.destroy();
   }
@@ -164,7 +164,7 @@ WebSocket.prototype.ping = function(data) {
     return;
   }
   data = data || 0;
-  self.socket.write(self.rfc6455Protocol.buildPingFrame(Buffer.alloc(data)));
+  self.socket.write(self.rfc6455Protocol.buildPingFrame(Buffer.from(data)));
 };
 
 WebSocket.prototype.pong = function(data) {
@@ -174,7 +174,7 @@ WebSocket.prototype.pong = function(data) {
     return;
   }
   data = data || 0;
-  self.socket.write(self.rfc6455Protocol.buildPongFrame(Buffer.alloc(data)));
+  self.socket.write(self.rfc6455Protocol.buildPongFrame(Buffer.from(data)));
 };
 
 WebSocket.prototype.READY_STATES = READY_STATES;
