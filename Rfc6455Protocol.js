@@ -176,7 +176,7 @@ function extractFrame(self, chunk_, offset) {
   switch(self.state) {
     case 0:
       self.headerBuffer = Buffer.concat([self.headerBuffer, chunk]);
-      if(self.headerBuffer.length < 8) {
+      if(self.headerBuffer.length < 4) {
         return 0;
       }
       var result = processHeader(self.headerBuffer);
