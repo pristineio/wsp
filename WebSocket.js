@@ -1,4 +1,3 @@
-/* eslint-env es6 */
 'use strict';
 var stream = require('stream');
 var crypto = require('crypto');
@@ -156,9 +155,6 @@ class WebSocket extends stream.Writable {
     }
     var method = 'build' + (typeof data === 'string' ? 'Text' : 'Binary') +
       'Frame';
-
-    console.log('send', data);
-
     this.socket.write(this.rfc6455Protocol[method](Buffer.from(data)));
   }
 

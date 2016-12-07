@@ -1,4 +1,3 @@
-/* eslint-env es6 */
 'use strict';
 var stream = require('stream');
 var crypto = require('crypto');
