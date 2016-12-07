@@ -32,19 +32,6 @@ var MASK = 128;
 var OPCODE = 15;
 var LENGTH = 127;
 
-function applyMask(payload, mask, offset) {
-  if(!mask || mask.length === 0 || !payload) {
-    return;
-  }
-  offset = offset || 0;
-  var i = -1;
-  var l = payload.length-offset;
-  while(++i < l) {
-    var x = offset+i;
-    payload[x] = payload[x] ^ mask[i%4];
-  }
-}
-
 function Rfc6455Protocol(isMasking, listener) {
   this.listener = listener || function() {};
   this.isMasking = !!isMasking;
@@ -63,6 +50,19 @@ Object.keys(OPCODES).forEach(function(opCodeName) {
     return buildFrame(this, buffer, OPCODES[opCodeName]);
   };
 });
+
+function applyMask(payload, mask, offset) {
+  if(!mask || mask.length === 0 || !payload) {
+    return;
+  }
+  offset = offset || 0;
+  var i = -1;
+  var l = payload.length-offset;
+  while(++i < l) {
+    var x = offset+i;
+    payload[x] = payload[x] ^ mask[i%4];
+  }
+}
 
 function initialize(self) {
   self.bytesCopied = 0;
@@ -89,13 +89,13 @@ function buildFrame(self, buffer, opcode) {
     wsFrame[3] = length & BYTE;
   } else {
     wsFrame[1] = masked | 127;
-    wsFrame[2] = Math.floor(length / Math.pow(2,56)) & BYTE;
-    wsFrame[3] = Math.floor(length / Math.pow(2,48)) & BYTE;
-    wsFrame[4] = Math.floor(length / Math.pow(2,40)) & BYTE;
-    wsFrame[5] = Math.floor(length / Math.pow(2,32)) & BYTE;
-    wsFrame[6] = Math.floor(length / Math.pow(2,24)) & BYTE;
-    wsFrame[7] = Math.floor(length / Math.pow(2,16)) & BYTE;
-    wsFrame[8] = Math.floor(length / Math.pow(2,8)) & BYTE;
+    wsFrame[2] = Math.floor(length / 2<<55) & BYTE;
+    wsFrame[3] = Math.floor(length / 2<<47) & BYTE;
+    wsFrame[4] = Math.floor(length / 2<<39) & BYTE;
+    wsFrame[5] = Math.floor(length / 2<<31) & BYTE;
+    wsFrame[6] = Math.floor(length / 2<<23) & BYTE;
+    wsFrame[7] = Math.floor(length / 2<<15) & BYTE;
+    wsFrame[8] = Math.floor(length / 2<<7) & BYTE;
     wsFrame[9] = length & BYTE;
   }
   buffer.copy(wsFrame, offset, 0, buffer.length);
@@ -107,8 +107,67 @@ function buildFrame(self, buffer, opcode) {
   return wsFrame;
 }
 
-function processHeader(chunk_) {
-  var header = {
+function emitFrame(self) {
+  if(self.header.isMasked) {
+    applyMask(self.payload, self.header.mask);
+  }
+  self.listener(self.header.opcode, self.payload);
+  initialize(self);
+}
+
+function extractMask(self) {
+  if(!self.header.isMasked) {
+    return;
+  }
+  self.header.payloadOffset += 4;
+  self.header.mask = Buffer.alloc(4);
+  self.headerBuffer.slice(self.header.payloadOffset-4,
+    self.header.payloadOffset).copy(self.header.mask);
+}
+
+function setPayloadLength(self) {
+  if(self.header.payloadLength === 0) {
+    emitFrame(self);
+    return 0;
+  }
+  if(self.header.payloadLength === 126) {
+    self.header.payloadOffset = 4;
+    self.header.payloadLength = self.headerBuffer.readUInt16BE(2);
+  } else if(self.header.payloadLength === 127) {
+    self.header.payloadOffset = 10;
+    self.header.payloadLength = self.headerBuffer.readDoubleBE(2);
+    if(self.header.payloadLength >= Number.MAX_SAFE_INTEGER) {
+      return new Error('Unsupported UInt64 length');
+    }
+  }
+}
+
+function extractPayload(self, offset, j) {
+  self.payload = Buffer.alloc(self.header.payloadLength);
+  if(self.header.payloadLength <= self.headerBuffer.length) {
+    j = self.header.payloadLength + self.header.payloadOffset + offset;
+    self.headerBuffer.slice(self.header.payloadOffset, j)
+      .copy(self.payload);
+    self.bytesCopied += self.header.payloadLength;
+    emitFrame(self);
+    return j;
+  }
+  if(self.header.payloadOffset < self.headerBuffer.length) {
+    self.headerBuffer.slice(self.header.payloadOffset).copy(self.payload);
+    self.bytesCopied += self.headerBuffer.length -
+      self.header.payloadOffset;
+  }
+}
+
+function extractHeader(self, chunk, offset, j) {
+  var temp = Buffer.alloc(self.headerBuffer.length + chunk.length);
+  self.headerBuffer.copy(temp);
+  chunk.copy(temp, self.headerBuffer.length);
+  self.headerBuffer = temp;
+  if(self.headerBuffer.length < 14) {
+    return 0;
+  }
+  self.header = {
     mask: null,
     validOpcode: false,
     reservedBitsZero: false,
@@ -119,39 +178,34 @@ function processHeader(chunk_) {
     payloadOffset: 0,
     payloadLength: 0
   };
-
-  var chunk = chunk_.slice(0);
-
-  header.reservedBitsZero = (chunk[0] & RSV) === 0;
-  header.isFinal = (chunk[0] & FIN) === FIN;
-  header.opcode = chunk[0] & OPCODE;
-  header.validOpcode = VALID_OPCODES[header.opcode] === 1;
-  header.isContinuation = header.opcode === 0;
-  header.isMasked = (chunk[1] & MASK) === MASK;
-  header.payloadLength = chunk[1] & LENGTH;
-  header.payloadOffset = 2;
-
-  if(!header.reservedBitsZero) {
-    return new Error('RSV not zero');
+  self.header.reservedBitsZero = (chunk[0] & RSV) === 0;
+  self.header.isFinal = (chunk[0] & FIN) === FIN;
+  self.header.opcode = chunk[0] & OPCODE;
+  self.header.validOpcode = VALID_OPCODES[self.header.opcode] === 1;
+  self.header.isContinuation = self.header.opcode === 0;
+  self.header.isMasked = (chunk[1] & MASK) === MASK;
+  self.header.payloadLength = chunk[1] & LENGTH;
+  self.header.payloadOffset = 2;
+  if(!self.header.reservedBitsZero) {
+    self.emit('error', new Error('RSV not zero'));
+    return 0;
   }
-
-  if(!header.validOpcode) {
-    return new Error('Unknown opcode');
+  if(!self.header.validOpcode) {
+    self.emit('error', new Error('Invalid opcode'));
+    return 0;
   }
-
-  if(FRAGMENTED_OPCODES[header.opcode] !== 1 && !header.isFinal) {
-    return new Error('Expected non-final packet');
+  if(FRAGMENTED_OPCODES[self.header.opcode] !== 1 && !self.header.isFinal) {
+    self.emit('error', new Error('Expected non-final packet'));
+    return 0;
   }
-
-  return header;
-}
-
-function emitFrame(self) {
-  if(self.header.isMasked) {
-    applyMask(self.payload, self.header.mask);
+  var result = setPayloadLength(self);
+  if(result instanceof Error) {
+    self.emit('error', result);
+    return 0;
   }
-  self.listener(self.header.opcode, self.payload);
-  initialize(self);
+  extractMask(self);
+  extractPayload(self, offset, j);
+  self.state = 1;
 }
 
 function extractFrame(self, chunk_, offset) {
@@ -162,53 +216,7 @@ function extractFrame(self, chunk_, offset) {
   }
   switch(self.state) {
     case 0:
-      self.headerBuffer = Buffer.concat([self.headerBuffer, chunk]);
-      if(self.headerBuffer.length < 2) {
-        return 0;
-      }
-      var result = processHeader(self.headerBuffer);
-      if(result instanceof Error) {
-        self.emit('error', result);
-        return 0;
-      }
-      self.header = result;
-      if(self.header.payloadLength === 0) {
-        emitFrame(self);
-        return 0;
-      }
-      if(self.header.payloadLength === 126) {
-        if(self.headerBuffer.length < 4) {
-          return 0;
-        }
-        self.header.payloadLength = self.headerBuffer.readUInt16BE(2);
-        self.header.payloadOffset = 4;
-      } else if(self.header.payloadLength === 127) {
-        return new Error('Unsupported UInt64 length');
-      }
-      if(self.header.isMasked) {
-        self.header.payloadOffset += 4;
-        self.header.mask = Buffer.alloc(4);
-        if(self.headerBuffer.length < self.header.payloadOffset) {
-          return 0;
-        }
-        self.headerBuffer.slice(self.header.payloadOffset-4,
-          self.header.payloadOffset).copy(self.header.mask);
-      }
-      self.payload = Buffer.alloc(self.header.payloadLength);
-      if(self.header.payloadLength <= self.headerBuffer.length) {
-        j = self.header.payloadLength + self.header.payloadOffset + offset;
-        self.headerBuffer.slice(self.header.payloadOffset, j)
-          .copy(self.payload);
-        self.bytesCopied += self.header.payloadLength;
-        emitFrame(self);
-        return j;
-      }
-      if(self.header.payloadOffset < self.headerBuffer.length) {
-        self.headerBuffer.slice(self.header.payloadOffset).copy(self.payload);
-        self.bytesCopied += self.headerBuffer.length -
-          self.header.payloadOffset;
-      }
-      self.state = 1;
+      extractHeader(self, chunk, offset, j);
       break;
     case 1:
       j = Math.min(chunk.length, self.header.payloadLength - self.bytesCopied);
