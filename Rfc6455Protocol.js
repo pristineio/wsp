@@ -129,14 +129,12 @@ class Rfc6455Protocol extends stream.Transform {
       this._applyMask(this.payload, this.header.mask);
     }
     this.listener(this.header.opcode, this.payload);
-
     this.push(this.payload);
-
     this._initialize();
   }
 
   extractMask() {
-    if(!this.header.isMasked) {
+    if(!this.header || !this.header.isMasked) {
       return;
     }
     this.header.payloadOffset += 4;
@@ -149,10 +147,6 @@ class Rfc6455Protocol extends stream.Transform {
   }
 
   setPayloadLength() {
-    if(this.header.payloadLength === 0) {
-      this.emitFrame();
-      return 0;
-    }
     if(this.header.payloadLength === 126) {
       this.header.payloadOffset = 4;
       if(this.headerBuffer.length < this.header.payloadOffset) {
@@ -213,6 +207,10 @@ class Rfc6455Protocol extends stream.Transform {
     var result = this.setPayloadLength();
     if(result instanceof Error) {
       this.emit('error', result);
+      return 0;
+    }
+    if(this.header.payloadLength === 0) {
+      this.emitFrame();
       return 0;
     }
     this.extractMask();
