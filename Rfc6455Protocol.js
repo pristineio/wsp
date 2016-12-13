@@ -211,17 +211,9 @@ class Rfc6455Protocol extends stream.Transform {
     this.headerBuffer.slice(this.header.payloadOffset-4,
       this.header.payloadOffset).copy(this.header.mask);
     this.payload = Buffer.alloc(this.header.payloadLength);
-    if(this.header.payloadLength <= this.headerBuffer.length) {
-      j = this.header.payloadLength + this.header.payloadOffset + offset;
-      this.headerBuffer.slice(this.header.payloadOffset, j).copy(this.payload);
-      this.bytesCopied += this.header.payloadLength;
-      this.emitFrame();
-      return 0;
-    }
     if(this.header.payloadOffset < this.headerBuffer.length) {
       this.headerBuffer.slice(this.header.payloadOffset).copy(this.payload);
-      this.bytesCopied += this.headerBuffer.length -
-        this.header.payloadOffset;
+      this.bytesCopied += this.headerBuffer.length - this.header.payloadOffset;
     }
     this.state = 1;
   }
