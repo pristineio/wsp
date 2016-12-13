@@ -133,19 +133,6 @@ class Rfc6455Protocol extends stream.Transform {
     this._initialize();
   }
 
-  extractMask() {
-    if(!this.header || !this.header.isMasked) {
-      return;
-    }
-    this.header.payloadOffset += 4;
-    if(this.headerBuffer.length < this.header.payloadOffset) {
-      return 0;
-    }
-    this.header.mask = Buffer.alloc(4);
-    this.headerBuffer.slice(this.header.payloadOffset-4,
-      this.header.payloadOffset).copy(this.header.mask);
-  }
-
   setPayloadLength() {
     if(this.header.payloadLength === 126) {
       this.header.payloadOffset = 4;
@@ -184,13 +171,13 @@ class Rfc6455Protocol extends stream.Transform {
       payloadOffset: 0,
       payloadLength: 0
     };
-    this.header.reservedBitsZero = (chunk[0] & RSV) === 0;
-    this.header.isFinal = (chunk[0] & FIN) === FIN;
-    this.header.opcode = chunk[0] & OPCODE;
+    this.header.reservedBitsZero = (this.headerBuffer[0] & RSV) === 0;
+    this.header.isFinal = (this.headerBuffer[0] & FIN) === FIN;
+    this.header.opcode = this.headerBuffer[0] & OPCODE;
     this.header.validOpcode = VALID_OPCODES[this.header.opcode] === 1;
     this.header.isContinuation = this.header.opcode === 0;
-    this.header.isMasked = (chunk[1] & MASK) === MASK;
-    this.header.payloadLength = chunk[1] & LENGTH;
+    this.header.isMasked = (this.headerBuffer[1] & MASK) === MASK;
+    this.header.payloadLength = this.headerBuffer[1] & LENGTH;
     this.header.payloadOffset = 2;
     if(!this.header.reservedBitsZero) {
       this.emit('error', new Error('RSV not zero'));
@@ -213,14 +200,23 @@ class Rfc6455Protocol extends stream.Transform {
       this.emitFrame();
       return 0;
     }
-    this.extractMask();
+    if(!this.header || !this.header.isMasked) {
+      return;
+    }
+    this.header.payloadOffset += 4;
+    if(this.headerBuffer.length < this.header.payloadOffset) {
+      return 0;
+    }
+    this.header.mask = Buffer.alloc(4);
+    this.headerBuffer.slice(this.header.payloadOffset-4,
+      this.header.payloadOffset).copy(this.header.mask);
     this.payload = Buffer.alloc(this.header.payloadLength);
     if(this.header.payloadLength <= this.headerBuffer.length) {
       j = this.header.payloadLength + this.header.payloadOffset + offset;
       this.headerBuffer.slice(this.header.payloadOffset, j).copy(this.payload);
       this.bytesCopied += this.header.payloadLength;
       this.emitFrame();
-      return;
+      return 0;
     }
     if(this.header.payloadOffset < this.headerBuffer.length) {
       this.headerBuffer.slice(this.header.payloadOffset).copy(this.payload);
