@@ -48,10 +48,25 @@ class Rfc6455Protocol extends stream.Transform {
   constructor(opts) {
     super({
       transform: function(chunk, encoding, cb) {
-        var offset = 0;
-        do {
-          offset = this.extractFrame(chunk, offset);
-        } while(offset > 0);
+        switch(this.state) {
+          case 0:
+            this.extractHeader(chunk);
+            break;
+          case 1:
+            var j = Math.min(chunk.length, this.header.payloadLength -
+              this.bytesCopied);
+            chunk.copy(this.payload, this.bytesCopied, 0, j);
+            this.bytesCopied += j;
+            var remainder = Buffer.alloc(chunk.length - j);
+            chunk.slice(j).copy(remainder);
+            if(this.bytesCopied === this.header.payloadLength) {
+              this.emitFrame();
+              if(remainder.length > 0) {
+                this.extractHeader(remainder);
+              }
+            }
+            break;
+        }
         cb();
       }
     });
@@ -82,6 +97,7 @@ class Rfc6455Protocol extends stream.Transform {
   }
 
   _initialize() {
+    this.canPush = true;
     this.bytesCopied = 0;
     this.state = 0;
     this.header = null;
@@ -92,6 +108,10 @@ class Rfc6455Protocol extends stream.Transform {
   _buildFrame(buffer, opcode) {
     buffer = buffer || Buffer.alloc(0);
     var length = buffer.length;
+    if(length >= Number.MAX_SAFE_INTEGER) {
+      this.emit('error', new Error('Unsupported UInt64 length'));
+      return;
+    }
     var header = (length <= 125) ? 2 : (length <= 65535 ? 4 : 10);
     var offset = header + (this.isMasking ? 4 : 0);
     var masked = this.isMasking ? MASK : 0;
@@ -106,14 +126,7 @@ class Rfc6455Protocol extends stream.Transform {
       wsFrame[3] = length & BYTE;
     } else {
       wsFrame[1] = masked | 127;
-      wsFrame[2] = Math.floor(length / 2<<55) & BYTE;
-      wsFrame[3] = Math.floor(length / 2<<47) & BYTE;
-      wsFrame[4] = Math.floor(length / 2<<39) & BYTE;
-      wsFrame[5] = Math.floor(length / 2<<31) & BYTE;
-      wsFrame[6] = Math.floor(length / 2<<23) & BYTE;
-      wsFrame[7] = Math.floor(length / 2<<15) & BYTE;
-      wsFrame[8] = Math.floor(length / 2<<7) & BYTE;
-      wsFrame[9] = length & BYTE;
+      wsFrame.writeDoubleBE(length, 2);
     }
     buffer.copy(wsFrame, offset, 0, buffer.length);
     if(this.isMasking) {
@@ -129,36 +142,19 @@ class Rfc6455Protocol extends stream.Transform {
       this._applyMask(this.payload, this.header.mask);
     }
     this.listener(this.header.opcode, this.payload);
-    this.push(this.payload);
+    if(this._readableState.readableListening) {
+      this.push(this.payload);
+    }
     this._initialize();
   }
 
-  setPayloadLength() {
-    if(this.header.payloadLength === 126) {
-      this.header.payloadOffset = 4;
-      if(this.headerBuffer.length < this.header.payloadOffset) {
-        return 0;
-      }
-      this.header.payloadLength = this.headerBuffer.readUInt16BE(2);
-    } else if(this.header.payloadLength === 127) {
-      this.header.payloadOffset = 10;
-      if(this.headerBuffer.length < this.header.payloadOffset) {
-        return 0;
-      }
-      this.header.payloadLength = this.headerBuffer.readDoubleBE(2);
-      if(this.header.payloadLength >= Number.MAX_SAFE_INTEGER) {
-        return new Error('Unsupported UInt64 length');
-      }
-    }
-  }
-
-  extractHeader(chunk, offset, j) {
+  extractHeader(chunk) {
     var temp = Buffer.alloc(this.headerBuffer.length + chunk.length);
     this.headerBuffer.copy(temp);
     chunk.copy(temp, this.headerBuffer.length);
     this.headerBuffer = temp;
     if(this.headerBuffer.length < 2) {
-      return 0;
+      return;
     }
     this.header = {
       mask: null,
@@ -178,67 +174,72 @@ class Rfc6455Protocol extends stream.Transform {
     this.header.isContinuation = this.header.opcode === 0;
     this.header.isMasked = (this.headerBuffer[1] & MASK) === MASK;
     this.header.payloadLength = this.headerBuffer[1] & LENGTH;
-    this.header.payloadOffset = 2;
+    this.header.payloadOffset = this.header.isMasked ? 6 : 2;
+    this.header.opcodeName = Rfc6455Protocol.OPCODE_NAMES[this.header.opcode];
+
     if(!this.header.reservedBitsZero) {
       this.emit('error', new Error('RSV not zero'));
-      return 0;
+      return;
     }
     if(!this.header.validOpcode) {
       this.emit('error', new Error('Invalid opcode'));
-      return 0;
+      return;
     }
     if(FRAGMENTED_OPCODES[this.header.opcode] !== 1 && !this.header.isFinal) {
       this.emit('error', new Error('Expected non-final packet'));
-      return 0;
-    }
-    var result = this.setPayloadLength();
-    if(result instanceof Error) {
-      this.emit('error', result);
-      return 0;
-    }
-    if(this.header.payloadLength === 0) {
-      this.emitFrame();
-      return 0;
-    }
-    if(!this.header || !this.header.isMasked) {
       return;
     }
-    this.header.payloadOffset += 4;
-    if(this.headerBuffer.length < this.header.payloadOffset) {
-      return 0;
+
+    if(this.header.payloadLength === 126) {
+      this.header.payloadOffset += 2;
+      if(this.headerBuffer.length < this.header.payloadOffset) {
+        return;
+      }
+      this.header.payloadLength = this.headerBuffer.readUInt16BE(2);
+    } else if(this.header.payloadLength === 127) {
+      this.header.payloadOffset += 8;
+      if(this.headerBuffer.length < this.header.payloadOffset) {
+        return;
+      }
+      this.header.payloadLength = this.headerBuffer.readDoubleBE(2);
+      if(this.header.payloadLength >= Number.MAX_SAFE_INTEGER) {
+        this.emit('error', new Error('Unsupported UInt64 length'));
+        return;
+      }
     }
+
+    if(this.headerBuffer.length < this.header.payloadOffset) {
+      return;
+    }
+
+    // Extract mask
     this.header.mask = Buffer.alloc(4);
     this.headerBuffer.slice(this.header.payloadOffset-4,
       this.header.payloadOffset).copy(this.header.mask);
+
+    // Extract payload
     this.payload = Buffer.alloc(this.header.payloadLength);
-    if(this.header.payloadOffset < this.headerBuffer.length) {
+    var frameEnd = this.header.payloadLength + this.header.payloadOffset;
+    var remainder = Buffer.alloc(0);
+    if(this.headerBuffer.length >= frameEnd) {
+      remainder = Buffer.alloc(this.headerBuffer.length - frameEnd);
+      this.headerBuffer.slice(this.header.payloadOffset, frameEnd).copy(
+        this.payload);
+      this.bytesCopied = this.header.payloadLength;
+      this.headerBuffer.slice(frameEnd).copy(remainder);
+    } else if(this.header.payloadOffset < this.headerBuffer.length) {
       this.headerBuffer.slice(this.header.payloadOffset).copy(this.payload);
       this.bytesCopied += this.headerBuffer.length - this.header.payloadOffset;
     }
-    this.state = 1;
-  }
 
-  extractFrame(chunk_, offset) {
-    var j = 0;
-    var chunk = chunk_.slice(offset);
-    if(chunk.length === 0) {
-      return j;
+    if(this.bytesCopied === this.header.payloadLength) {
+      this.emitFrame();
+      if(remainder.length > 0) {
+        this.extractHeader(remainder);
+      }
+      return;
     }
-    switch(this.state) {
-      case 0:
-        this.extractHeader(chunk, offset, j);
-        break;
-      case 1:
-        j = Math.min(chunk.length, this.header.payloadLength-this.bytesCopied);
-        chunk.copy(this.payload, this.bytesCopied, 0, j);
-        this.bytesCopied += j;
-        if(this.bytesCopied === this.header.payloadLength) {
-          this.emitFrame();
-          return j;
-        }
-        break;
-    }
-    return j;
+    this.state = 1;
   }
 }
 
