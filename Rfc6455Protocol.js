@@ -142,7 +142,7 @@ class Rfc6455Protocol extends stream.Transform {
       this._applyMask(this.payload, this.header.mask);
     }
     this.listener(this.header.opcode, this.payload);
-    if(this._readableState.readableListening) {
+    if(this._readableState.pipesCount > 0) {
       this.push(this.payload);
     }
     this._initialize();
